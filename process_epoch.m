@@ -57,7 +57,6 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
     stats.num = 0 ; % return something even if subset = []
     stats.time = 0 ;
     start = tic ;
-    figure(2);
     n = 0;
     stats.errorG = 0;
     stats.errorD = 0;
@@ -66,8 +65,9 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
     % get batch and train
     % --------------
     for t=1:params.batchSize:numel(subset)
+        batchCount = fix((t-1)/params.batchSize)+1;
         fprintf('%s: epoch %02d: %3d/%3d:', mode, epoch, ...
-            fix((t-1)/params.batchSize)+1, ceil(numel(subset)/params.batchSize)) ;
+            batchCount, ceil(numel(subset)/params.batchSize)) ;
         batchSize = min(params.batchSize, numel(subset) - t + 1) ;
 
         % get this image batch and prefetch the next
@@ -110,9 +110,6 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
             netG.eval({'masked_images', maskedImages, 'mask', MaskC.mask_array}, {'mse_loss', 1});
             mseLoss = netG.getVar('mse_loss');
             mseLoss = gather(mseLoss.value);
-            completedImages = netG.getVar('completed_images');
-            completedImages = gather(completedImages.value);
-            show_completed_images(completedImages);
             % mseLoss should be a scalar
             errorG = mseLoss;
             % update netG
@@ -123,7 +120,7 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
             netG.mode = 'normal';
             netG.eval({'masked_images', maskedImages, 'mask', MaskC.mask_array});
             completedImages = netG.getVar('completed_images');
-            completedImages = gather(completedImages.value);
+            completedImages = completedImages.value;
             
             % train discriminator with fake and real data
             netD.mode = 'normal' ;
@@ -195,12 +192,22 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
             case 'combination'
                 stats.errorG = stats.errorG + errorG;
                 stats.errorD = stats.errorD + errorD;
-                fprintf(' errorG: %.3f errorD: %.3f', errorG/batch_size, errorD/(batchSize * 2)) ;
+                fprintf(' errorG: %.3f errorD: %.3f', errorG/batchSize, errorD/(batchSize * 2)) ;
             otherwise
                 error('wrong training object')
         end
         fprintf(' %.1f (%.1f) Hz', averageSpeed, currentSpeed) ;
         fprintf('\n') ;
+        % ----------
+        % save sample images
+        % ----------
+        if mod(batchCount, params.sample_save_per_batch_count)==0
+           path = sprintf('./pics/epoch_%d_%d.png', params.epoch, batchCount);
+           completedImages = netG.getVar('completed_images');
+           completedImages = completedImages.value;
+           save_sample_images(completedImages, [4, 4], path);
+           fprintf('save sample images as %s\n.', path);
+        end
     end
     
     stats.errorG = stats.errorG / numel(subset) ;
@@ -342,9 +349,9 @@ function local_area = crop_local_area(batch_images, Mask)
 end
 function der = get_der_from_discriminator(netD, Mask)
     netD_local_input_der = netD.getVar('local_disc_input');
-    netD_local_input_der = gather(netD_local_input_der.der);
+    netD_local_input_der = netD_local_input_der.der;
     netD_global_input_der = netD.getVar('global_disc_input');
-    netD_global_input_der = gather(netD_global_input_der.der);
+    netD_global_input_der = netD_global_input_der.der;
     der = netD_global_input_der;
     la_h_s = Mask.local_area_left_top_point(1);
     la_w_s = Mask.local_area_left_top_point(2);
@@ -353,23 +360,24 @@ function der = get_der_from_discriminator(netD, Mask)
     der(la_h_s:la_h_s+la_size_h-1, la_w_s:la_w_s+la_size_w-1, :, :) = ...
         der(la_h_s:la_h_s+la_size_h-1, la_w_s:la_w_s+la_size_w-1, :, :) + netD_local_input_der;
 end
-function show_completed_images(completed_images)
+function save_sample_images(images, arrangement, path)
+    if isa(images, 'gpuArray')
+        images = gather(images);
+    end
     % show generated images
-    sz = size(completed_images) ;
-    row = 4;
-    col = 4;
-    im = zeros(row*sz(1),col*sz(2),3,'uint8');
+    sz = size(images) ;
+    row = arrangement(1);
+    col = arrangement(2);
+    im = zeros(row*sz(1), col*sz(2),3, 'uint8');
     for ii=1:row
         for jj=1:col
             idx = col*(ii-1)+jj ;
             if idx<=sz(4)
-                im((ii-1)*sz(1)+1:ii*sz(1),(jj-1)*sz(2)+1:jj*sz(2),:) = ...
-                    gather(imsingle2uint8(completed_images(:,:,:,idx))) ;
+                im((ii-1)*sz(1)+1:ii*sz(1),(jj-1)*sz(2)+1:jj*sz(2),:) = imsingle2uint8(images(:,:,:,idx)) ;
             end
         end
     end
-    imshow(im);
-    drawnow;
+    imwrite(im, path);
 end
 
 % -------------------------------------------------------------------------

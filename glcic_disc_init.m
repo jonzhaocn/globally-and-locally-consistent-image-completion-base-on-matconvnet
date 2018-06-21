@@ -83,16 +83,4 @@ function net = glcic_disc_init(varargin)
     % setting
     net.initParams() ;
     
-    % Meta parameters
-    net.meta.inputSize = [96 96 3] ;
-    net.meta.augmentation.jitterLocation = true ;
-    net.meta.augmentation.jitterFlip = true ;
-    net.meta.augmentation.jitterBrightness = 0 ;
-    net.meta.augmentation.jitterAspect = 0 ;
-    % train options 
-    lr = logspace(-5, -6, 20);
-    net.meta.trainOpts.learningRate =  lr;
-    net.meta.trainOpts.numEpochs = numel(lr) ;
-    net.meta.trainOpts.batchSize = 64 ;
-    net.meta.trainOpts.weightDecay = 0.0005 ;
 end

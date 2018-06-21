@@ -16,7 +16,7 @@ function [netG, netD, info] = glcic_train(varargin)
 
     opts.numFetchThreads = 12 ;
     % opts.imdbPath = fullfile(opts.expDir, 'imdb.mat');
-    opts.train = struct('gpus', []) ;
+    opts.train = struct('gpus', [1]) ;
     opts = vl_argparse(opts, varargin) ;
 
     if ~isfield(opts.train, 'gpus')
@@ -46,18 +46,32 @@ function [netG, netD, info] = glcic_train(varargin)
     netG = glcic_gen_init;
     % discriminator model
     netD = glcic_disc_init;
-
-    netD.meta.normalization.averageImage = [];
-    netD.meta.normalization.imageSize = [128 128 3];
-    netD.meta.normalization.cropSize = 128/178;
+    
+    % Meta parameters
+    meta.inputSize = [96 96 3] ;
+    meta.augmentation.jitterLocation = false ;
+    meta.augmentation.jitterFlip = false ;
+    meta.augmentation.jitterBrightness = 0 ;
+    meta.augmentation.jitterAspect = 0 ;
+    % train options 
+    lr = logspace(-5, -6, 20);
+    meta.trainOpts.learningRate =  lr;
+    meta.trainOpts.numEpochs = numel(lr) ;
+    meta.trainOpts.batchSize = 64 ;
+    meta.trainOpts.weightDecay = 0.0005 ;
+    meta.trainOpts.sample_save_per_batch_count = 100;
+    % 
+    meta.normalization.averageImage = [];
+    meta.normalization.imageSize = [128 128 3];
+    meta.normalization.cropSize = 128/178;
     % -------------------------------------------------------------------------
     %                                                                     Learn
     % -------------------------------------------------------------------------
 
     [netG, netD, info] = glcic_train_dagnn(netG, netD, imdb, ... 
-                          getBatchFn(opts, netD.meta), ...
+                          getBatchFn(opts, meta), ...
                           'expDir', opts.expDir, ...
-                          netD.meta.trainOpts, ...
+                          meta.trainOpts, ...
                           opts.train) ;
 
 end
@@ -81,10 +95,10 @@ function fn = getBatchFn(opts, meta)
       bopts.train.(f) = meta.augmentation.(f) ;
     end
 
-    fn = @(x,y) getBatch(bopts,useGpu,x,y) ;
+    fn = @(x,y) getBatch(bopts,x,y) ;
 end
 % -------------------------------------------------------------------------
-function varargout = getBatch(opts, useGpu, imdb, batch)
+function varargout = getBatch(opts, imdb, batch)
 % -------------------------------------------------------------------------
     images = strcat([imdb.imageDir filesep], imdb.images.name(batch)) ;
     if ~isempty(batch) && imdb.images.set(batch(1)) == 1
