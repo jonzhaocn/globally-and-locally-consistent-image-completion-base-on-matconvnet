@@ -60,6 +60,9 @@ function [netG, netD, info] = glcic_train(varargin)
     meta.trainOpts.batchSize = 64 ;
     meta.trainOpts.weightDecay = 0.0005 ;
     meta.trainOpts.sample_save_per_batch_count = 100;
+    meta.trainOpts.mask_range = [32, 32];
+    meta.trainOpts.local_area_size = [64, 64];
+    meta.trainOpts.miss_area_init_bias = 0.437;
     % 
     meta.normalization.averageImage = [];
     meta.normalization.imageSize = [128 128 3];

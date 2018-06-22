@@ -20,6 +20,10 @@ function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varar
     opts.solver = @solver.adam ;  % Empty array means use the default SGD solver
     opts.solverOpts.beta1 = 0.5 ;
     opts.sample_save_per_batch_count = 100;
+    opts.mask_range = [32, 64];
+    opts.local_area_size = [64, 64];
+    opts.miss_area_init_bias = 0.5;
+    
     [opts, varargin] = vl_argparse(opts, varargin) ;
     if ~isempty(opts.solver)
         assert(isa(opts.solver, 'function_handle') && nargout(opts.solver) == 2,...

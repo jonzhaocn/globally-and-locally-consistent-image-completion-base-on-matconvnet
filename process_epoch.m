@@ -90,9 +90,9 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
             params.getBatch(params.imdb, nextBatch) ;
         end
         
-        MaskC = createRandomMask(size(inputs{2}), [64, 64], [32, 64]);
-        MaskD = createRandomMask(size(inputs{2}), [64, 64], [32, 64]);
-        maskedImages = inputs{2} .* (1 - MaskC.mask_array);
+        MaskC = createRandomMask(size(inputs{2}), params.local_area_size, params.mask_range);
+        MaskD = createRandomMask(size(inputs{2}), params.local_area_size, params.mask_range);
+        maskedImages = inputs{2} .* (1 - MaskC.mask_array) + MaskC.mask_array * params.miss_area_init_bias;
         labelFake = zeros(1, 1, 1, numel(batch), 'single');
         labelReal = ones(1, 1, 1, numel(batch), 'single');
         if numGpus>0
