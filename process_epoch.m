@@ -1,4 +1,4 @@
-function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, trainingObject)
+function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
     % initialize with momentum 0
     if isempty(state) || isempty(state.solverStateG) || isempty(state.solverStateD)
         state.solverStateG = cell(1, numel(netG.params)) ;
@@ -61,6 +61,12 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
     stats.errorG = 0;
     stats.errorD = 0;
     
+    if params.epochPercentage > 1
+        params.epochPercentage =1;
+    elseif params.epochPercentage <= 0
+        params.epochPercentage = 0.1;
+    end
+    subset = subset(1: round(numel(subset)*params.epochPercentage) );
     % --------------
     % get batch and train
     % --------------
@@ -105,10 +111,10 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
         % -------------------
         % training object
         % --------------------
-        if strcmp(trainingObject, 'generator')
+        if strcmp(params.trainingObject, 'generator')
             netG.mode = 'normal';
             netG.eval({'original_images', original_images, 'mask', MaskC.mask_array, ...
-                'init_bias', params.miss_area_init_bias}, {'mse_loss', 1}, 'holdOn', 0);
+                'init_bias', params.miss_area_init_bias}, {'mse_loss', 1});
             mseLoss = netG.getVar('mse_loss');
             mseLoss = gather(mseLoss.value);
             % mseLoss should be a scalar
@@ -117,10 +123,10 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
             state.solverState = state.solverStateG;
             state = accumulateGradients(netG, state, params, batchSize, parserv);
             state.solverStateG = state.solverState;
-        elseif strcmp(trainingObject, 'discriminator') || strcmp(trainingObject, 'combination')
+        elseif strcmp(params.trainingObject, 'discriminator') || strcmp(params.trainingObject, 'combination')
             netG.mode = 'normal';
             netG.eval({'original_images', original_images, 'mask', MaskC.mask_array, ...
-                'init_bias', params.miss_area_init_bias}, 'holdOn', 0);
+                'init_bias', params.miss_area_init_bias});
             completedImages = netG.getVar('completed_images');
             completedImages = completedImages.value;
             
@@ -144,9 +150,9 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
             state.solverState = state.solverStateD;
             state = accumulateGradients(netD, state, params, 2 * batchSize, parserv);
             state.solverStateD = state.solverState;
-            if strcmp(trainingObject, 'combination')
+            if strcmp(params.trainingObject, 'combination')
                 local_images_area = crop_local_area(completedImages, MaskC);
-                netD.eval({'local_disc_input',local_images_area, 'global_disc_input',completedImages , 'labels',labelReal}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 0);
+                netD.eval({'local_disc_input',local_images_area, 'global_disc_input',completedImages , 'labels',labelReal}, {'sigmoid_cross_entropy_loss',1});
                 errorG = netD.getVar('sigmoid_cross_entropy_loss');
                 errorG = gather(errorG.value);
                 df_dg = get_der_from_discriminator(netD, MaskC);
@@ -170,7 +176,7 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
                 state.solverStateG = state.solverState;
             end
         else
-            error('wrong trainingObject:%s', trainingObject);
+            error('wrong params.trainingObject:%s', params.trainingObject);
         end
         % Get statistics.
         time = toc(start) + adjustTime ;
@@ -185,7 +191,7 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
             stats.time = time + adjustTime ;
         end
         % loss may get inf values
-        switch trainingObject
+        switch params.trainingObject
             case 'generator'
                 stats.errorG = stats.errorG + errorG;
                 fprintf(' errorG: %.3f', errorG/batchSize) ;
@@ -316,24 +322,24 @@ function Mask = createRandomMask(batch_images_size, local_area_size, mask_range)
     local_area_w = local_area_size(2);
     
     if images_h < local_area_h || images_w < local_area_w
-        error('images size should bigger than local size');
+        error('images size should not smaller than local size');
     end
     if mask_range(1) > mask_range(2)
         error('wrong mask range');
     end
     if mask_range(2) > local_area_h || mask_range(2) > local_area_w
-        error('max mask size should smaller than local area size');
+        error('max mask size should not bigger than local area size');
     end
     
-    local_area_h_start = randperm( max(images_h - local_area_h+1, 1), 1);
-    local_area_w_start = randperm( max(images_w - local_area_w+1, 1), 1);
+    local_area_h_start = randi( [1, images_h-local_area_h+1], 1, 1);
+    local_area_w_start = randi( [1, images_w-local_area_w+1], 1, 1);
     
     mask_size = randi(mask_range, 1, 2);
     mask_h = mask_size(1);
     mask_w = mask_size(2);
     
-    mask_h_start = randperm( max(local_area_h - mask_h + 1, 1), 1) + local_area_h_start - 1;
-    mask_w_start = randperm( max(local_area_w - mask_w + 1, 1), 1) + local_area_w_start - 1;
+    mask_h_start = randi( [1, local_area_h-mask_h+1], 1, 1) + local_area_h_start-1;
+    mask_w_start = randi( [1, local_area_w-mask_w+1], 1, 1) + local_area_w_start-1;
     
     mask_array = zeros(batch_images_size);
     mask_array(mask_h_start:mask_h_start+mask_h-1, mask_w_start:mask_w_start+mask_w-1, :, :) = 1;

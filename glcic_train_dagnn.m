@@ -107,14 +107,18 @@ function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varar
         params.getBatch = getBatch ;
         params.sample_save_per_batch_count = opts.sample_save_per_batch_count;
         if epoch == 1
-            trainingObject = 'generator';
+            params.trainingObject = 'generator';
+            params.epochPercentage = 1;
         elseif epoch == 2
-            trainingObject = 'discriminator';
+            params.trainingObject = 'discriminator';
+            params.epochPercentage = 0.4;
         else
-            trainingObject = 'combination';
+            params.trainingObject = 'combination';
+            params.epochPercentage = 1;
         end
+
         if numel(opts.gpus) <= 1
-            [netG, netD, state] = process_epoch(netG, netD, state, params, 'train', trainingObject) ;
+            [netG, netD, state] = process_epoch(netG, netD, state, params, 'train') ;
             if ~evaluateMode
                 saveState(modelPath(epoch), netG, netD, state) ;
             end
