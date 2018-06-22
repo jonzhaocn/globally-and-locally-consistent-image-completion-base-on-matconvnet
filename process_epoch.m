@@ -92,7 +92,7 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
         
         MaskC = createRandomMask(size(inputs{2}), params.local_area_size, params.mask_range);
         MaskD = createRandomMask(size(inputs{2}), params.local_area_size, params.mask_range);
-        maskedImages = inputs{2} .* (1 - MaskC.mask_array) + MaskC.mask_array * params.miss_area_init_bias;
+        original_images = inputs{2};
         labelFake = zeros(1, 1, 1, numel(batch), 'single');
         labelReal = ones(1, 1, 1, numel(batch), 'single');
         if numGpus>0
@@ -107,7 +107,8 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
         % --------------------
         if strcmp(trainingObject, 'generator')
             netG.mode = 'normal';
-            netG.eval({'masked_images', maskedImages, 'mask', MaskC.mask_array}, {'mse_loss', 1});
+            netG.eval({'original_images', original_images, 'mask', MaskC.mask_array, ...
+                'init_bias', params.miss_area_init_bias}, {'mse_loss', 1}, 'holdOn', 0);
             mseLoss = netG.getVar('mse_loss');
             mseLoss = gather(mseLoss.value);
             % mseLoss should be a scalar
@@ -118,7 +119,8 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
             state.solverStateG = state.solverState;
         elseif strcmp(trainingObject, 'discriminator') || strcmp(trainingObject, 'combination')
             netG.mode = 'normal';
-            netG.eval({'masked_images', maskedImages, 'mask', MaskC.mask_array});
+            netG.eval({'original_images', original_images, 'mask', MaskC.mask_array, ...
+                'init_bias', params.miss_area_init_bias}, 'holdOn', 0);
             completedImages = netG.getVar('completed_images');
             completedImages = completedImages.value;
             
@@ -160,7 +162,8 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode, tr
                 netG.accumulateParamDers = 0;
                 % netG can use backward propagation from the completed
                 % images layer instead of the loss layer
-                netG.eval({'masked_images', maskedImages, 'mask', MaskC.mask_array}, {'completed_images', df_dg}, 'holdOn', 0);
+                netG.eval({'original_images', original_images, 'mask', MaskC.mask_array, ...
+                    'init_bias', params.miss_area_init_bias}, {'completed_images', df_dg}, 'holdOn', 0);
                 % update netG
                 state.solverState = state.solverStateG;
                 state = accumulateGradients(netG, state, params, batchSize, parserv);

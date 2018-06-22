@@ -1,6 +1,6 @@
 classdef MSELoss < dagnn.ElementWise
     methods
-        % inputs{1}:completion, inputs{2}:source, inputs{3}:mask
+        % inputs{1}:completed_images, inputs{2}:original_images, inputs{3}:mask
         function outputs = forward(obj, inputs, params)
             outputs{1} = vl_nn_mse_loss(inputs{1}, inputs{2}, inputs{3});
         end

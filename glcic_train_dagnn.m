@@ -17,7 +17,7 @@ function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varar
     opts.weightDecay = 0.0005 ;
     opts.labelSmoothing = false ;
 
-    opts.solver = @solver.adam ;  % Empty array means use the default SGD solver
+    opts.solver = @solver.adam ; 
     opts.solverOpts.beta1 = 0.5 ;
     opts.sample_save_per_batch_count = 100;
     opts.mask_range = [32, 64];
