@@ -22,7 +22,6 @@ function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varar
     opts.sample_save_per_batch_count = 100;
     opts.mask_range = [32, 64];
     opts.local_area_size = [64, 64];
-    opts.miss_area_init_bias = 0.5;
     
     [opts, varargin] = vl_argparse(opts, varargin) ;
     if ~isempty(opts.solver)
