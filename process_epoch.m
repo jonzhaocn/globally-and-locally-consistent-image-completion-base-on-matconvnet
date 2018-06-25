@@ -111,76 +111,48 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
         % -------------------
         % training object
         % --------------------
-        switch params.trainingObject
-            case 'generator'
-                netG.mode = 'normal';
-                netG.accumulateParamDers = 0;
-                netG.eval({'original_images', original_images, 'mask', MaskC.mask_array}, ...
-                    {'mse_loss', 1});
-                mseLoss = netG.getVar('mse_loss');
-                mseLoss = gather(mseLoss.value);
-                % mseLoss should be a scalar
-                errorG = mseLoss;
-                % update netG
-                state.solverState = state.solverStateG;
-                state = accumulateGradients(netG, state, params, batchSize, parserv);
-                state.solverStateG = state.solverState;
-            case 'discriminator'
-                netG.mode = 'normal';
-                netG.eval({'original_images', original_images, 'mask', MaskC.mask_array});
-                completedImages = netG.getVar('completed_images');
-                completedImages = completedImages.value;
-
-                % train discriminator with fake and real data
-                netD.mode = 'normal' ;
-                netD.accumulateParamDers = 0 ;
-
-                local_images_area = crop_local_area(completedImages, MaskC);
-                netD.eval({'local_disc_input',local_images_area, 'global_disc_input',completedImages , 'labels',labelFake, ...
-                    'multiply_alpha', false}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 1) ;
-                errorFake = netD.getVar('sigmoid_cross_entropy_loss');
-                errorFake = gather(errorFake.value);
-                netD.accumulateParamDers = 1 ;
-
-                local_images_area = crop_local_area(original_images, MaskD);
-                netD.eval({'local_disc_input',local_images_area, 'global_disc_input', original_images, 'labels',labelReal, ...
-                    'multiply_alpha', false}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 0) ;
-
-                errorReal = netD.getVar('sigmoid_cross_entropy_loss');
-                errorReal = gather(errorReal.value);
-                errorD = errorFake + errorReal;
-                % update netD
-                state.solverState = state.solverStateD;
-                state = accumulateGradients(netD, state, params, 2 * batchSize, parserv);
-                state.solverStateD = state.solverState;
-            case 'combination'
-                netG.mode = 'normal';
-                netG.eval({'original_images', original_images, 'mask', MaskC.mask_array});
-                completedImages = netG.getVar('completed_images');
-                completedImages = completedImages.value;
-
-                % train discriminator with fake and real data
-                netD.mode = 'normal' ;
-                netD.accumulateParamDers = 0 ;
-                local_images_area = crop_local_area(completedImages, MaskC);
-                netD.eval({'local_disc_input',local_images_area, 'global_disc_input',completedImages , 'labels',labelFake, ...
-                    'multiply_alpha', true}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 1) ;
-                errorFake = netD.getVar('sigmoid_cross_entropy_loss');
-                errorFake = gather(errorFake.value);
-                % -----
-                netD.accumulateParamDers = 1 ;
-                local_images_area = crop_local_area(original_images, MaskD);
-                netD.eval({'local_disc_input',local_images_area, 'global_disc_input', original_images, 'labels',labelReal, ...
-                    'multiply_alpha', false}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 0) ;
-
-                errorReal = netD.getVar('sigmoid_cross_entropy_loss');
-                errorReal = gather(errorReal.value);
-                errorD = errorFake + errorReal;
-                % update netD
-                state.solverState = state.solverStateD;
-                state = accumulateGradients(netD, state, params, 2 * batchSize, parserv);
-                state.solverStateD = state.solverState;
-                % --------------------------------
+        if strcmp(params.trainingObject, "generator")
+            netG.mode = 'normal';
+            netG.accumulateParamDers = 0;
+            netG.eval({'original_images', original_images, 'mask', MaskC.mask_array}, ...
+                {'mse_loss', 1});
+            mseLoss = netG.getVar('mse_loss');
+            mseLoss = gather(mseLoss.value);
+            % mseLoss should be a scalar
+            errorG = mseLoss;
+            % update netG
+            state.solverState = state.solverStateG;
+            state = accumulateGradients(netG, state, params, batchSize, parserv);
+            state.solverStateG = state.solverState;
+        elseif strcmp(params.trainingObject, "discriminator") || strcmp(params.trainingObject, "combination")
+            netG.mode = 'normal';
+            netG.eval({'original_images', original_images, 'mask', MaskC.mask_array});
+            completedImages = netG.getVar('completed_images');
+            completedImages = completedImages.value;
+            
+            % train discriminator with fake and real data
+            netD.mode = 'normal' ;
+            netD.accumulateParamDers = 0 ;
+            local_images_area = crop_local_area(completedImages, MaskC);
+            netD.eval({'local_disc_input',local_images_area, 'global_disc_input',completedImages , 'labels',labelFake, ...
+                'multiply_alpha', false}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 1) ;
+            errorFake = netD.getVar('sigmoid_cross_entropy_loss');
+            errorFake = gather(errorFake.value);
+            % -----
+            netD.accumulateParamDers = 1 ;
+            local_images_area = crop_local_area(original_images, MaskD);
+            netD.eval({'local_disc_input',local_images_area, 'global_disc_input', original_images, 'labels',labelReal, ...
+                'multiply_alpha', false}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 0) ;
+            
+            errorReal = netD.getVar('sigmoid_cross_entropy_loss');
+            errorReal = gather(errorReal.value);
+            errorD = errorFake + errorReal;
+            % update netD
+            state.solverState = state.solverStateD;
+            state = accumulateGradients(netD, state, params, 2 * batchSize, parserv);
+            state.solverStateD = state.solverState;
+            % --------------------------------
+            if strcmp(params.trainingObject, "combination")
                 % calculate the gan loss of generator
                 netD.accumulateParamDers = 0 ;
                 local_images_area = crop_local_area(completedImages, MaskC);
@@ -207,12 +179,17 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
                 netG.accumulateParamDers = 1;
                 netG.eval({'original_images', original_images, 'mask', MaskC.mask_array}, ...
                     {'mse_loss', 1}, 'holdOn', 0);
+                
+                mseLoss = netG.getVar('mse_loss');
+                mseLoss = gather(mseLoss.value);
+                errorG = errorG + mseLoss;
                 % update netG
                 state.solverState = state.solverStateG;
-                state = accumulateGradients(netG, state, params, 2 * batchSize, parserv);
+                state = accumulateGradients(netG, state, params, batchSize, parserv);
                 state.solverStateG = state.solverState;
-            otherwise
-                error('wrong params.trainingObject:%s', params.trainingObject);
+            end
+        else
+            error('wrong params.trainingObject:%s', params.trainingObject);
         end
         % Get statistics.
         time = toc(start) + adjustTime ;

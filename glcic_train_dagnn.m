@@ -41,7 +41,7 @@ function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varar
 
     opts.derOutputs = {'objective', 1} ;
     opts.extractStatsFn = @extractStats ;
-    opts.plotStatistics = true;
+    opts.plotStatistics = false;
     opts.postEpochFn = [] ;  % postEpochFn(net,params,state) called after each epoch; can return a new learning rate, 0 to stop, [] for no change
     opts = vl_argparse(opts, varargin) ;
 
@@ -159,21 +159,27 @@ function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varar
             drawnow ;
             print(1, modelFigPath, '-dpdf') ;
         end
-
+ 
         if ~isempty(opts.postEpochFn)
             if nargout(opts.postEpochFn) == 0
-                opts.postEpochFn(net, params, state) ;
+                opts.postEpochFn(netG, params, state) ;
+                opts.postEpochFn(netD, params, state) ;
             else
-                lr = opts.postEpochFn(net, params, state) ;
+                lr = opts.postEpochFn(netG, params, state) ;
                 if ~isempty(lr), opts.learningRate = lr; end
                 if opts.learningRate == 0, break; end
             end
         end
+        
     end
 
     % With multiple GPUs, return one copy
-    if isa(net, 'Composite')
-        net = net{1}; 
+    if isa(netG, 'Composite')
+        netG = netG{1};
+    end
+    
+    if isa(netD, 'Composite')
+        netD = netD{1};
     end
 end
 
