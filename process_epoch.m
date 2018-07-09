@@ -96,14 +96,14 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
             params.getBatch(params.imdb, nextBatch) ;
         end
         
-        MaskC = createRandomMask(size(inputs{2}), params.local_area_size, params.mask_range);
-        MaskD = createRandomMask(size(inputs{2}), params.local_area_size, params.mask_range);
+        maskC = create_random_mask(size(inputs{2}), params.local_area_size, params.mask_range);
+        maskD = create_random_mask(size(inputs{2}), params.local_area_size, params.mask_range);
         original_images = inputs{2};
         labelFake = zeros(1, 1, 1, numel(batch), 'single');
         labelReal = ones(1, 1, 1, numel(batch), 'single');
         if numGpus>0
-            MaskC = structfun(@gpuArray, MaskC, 'UniformOutput', false) ;
-            MaskD = structfun(@gpuArray, MaskD, 'UniformOutput', false) ;
+            maskC = structfun(@gpuArray, maskC, 'UniformOutput', false) ;
+            maskD = structfun(@gpuArray, maskD, 'UniformOutput', false) ;
             labelFake = gpuArray(labelFake);
             labelReal = gpuArray(labelReal);
         end
@@ -114,7 +114,7 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
         if strcmp(params.trainingObject, "generator")
             netG.mode = 'normal';
             netG.accumulateParamDers = 0;
-            netG.eval({'original_images', original_images, 'mask', MaskC.mask_array}, ...
+            netG.eval({'original_images', original_images, 'mask', maskC.mask_array}, ...
                 {'mse_loss', 1});
             mseLoss = netG.getVar('mse_loss');
             mseLoss = gather(mseLoss.value);
@@ -126,21 +126,21 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
             state.solverStateG = state.solverState;
         elseif strcmp(params.trainingObject, "discriminator") || strcmp(params.trainingObject, "combination")
             netG.mode = 'normal';
-            netG.eval({'original_images', original_images, 'mask', MaskC.mask_array});
+            netG.eval({'original_images', original_images, 'mask', maskC.mask_array});
             completedImages = netG.getVar('completed_images');
             completedImages = completedImages.value;
             
             % train discriminator with fake and real data
             netD.mode = 'normal' ;
             netD.accumulateParamDers = 0 ;
-            local_images_area = crop_local_area(completedImages, MaskC);
+            local_images_area = get_local_area(completedImages, maskC);
             netD.eval({'local_disc_input',local_images_area, 'global_disc_input',completedImages , 'labels',labelFake, ...
                 'multiply_alpha', false}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 1) ;
             errorFake = netD.getVar('sigmoid_cross_entropy_loss');
             errorFake = gather(errorFake.value);
             % -----
             netD.accumulateParamDers = 1 ;
-            local_images_area = crop_local_area(original_images, MaskD);
+            local_images_area = get_local_area(original_images, maskD);
             netD.eval({'local_disc_input',local_images_area, 'global_disc_input', original_images, 'labels',labelReal, ...
                 'multiply_alpha', false}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 0) ;
             
@@ -155,12 +155,12 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
             if strcmp(params.trainingObject, "combination")
                 % calculate the gan loss of generator
                 netD.accumulateParamDers = 0 ;
-                local_images_area = crop_local_area(completedImages, MaskC);
+                local_images_area = get_local_area(completedImages, maskC);
                 netD.eval({'local_disc_input', local_images_area, 'global_disc_input',completedImages , 'labels',labelReal, ...
                     'multiply_alpha', true}, {'sigmoid_cross_entropy_loss', 1}, 'holdOn', 0);
                 errorG = netD.getVar('sigmoid_cross_entropy_loss');
                 errorG = gather(errorG.value);
-                df_dg = get_der_from_discriminator(netD, MaskC);
+                df_dg = get_der_from_discriminator(netD, maskC);
                 % cleanup der
                 for p=1:numel(netD.params)
                     netD.params(p).der = [];
@@ -173,11 +173,11 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
                 netG.accumulateParamDers = 0;
                 % netG can use backward propagation from the completed
                 % images layer instead of the loss layer
-                netG.eval({'original_images', original_images, 'mask', MaskC.mask_array}, ...
+                netG.eval({'original_images', original_images, 'mask', maskC.mask_array}, ...
                     {'completed_images', df_dg}, 'holdOn', 1);
                 % calculate the mse loss of the generator
                 netG.accumulateParamDers = 1;
-                netG.eval({'original_images', original_images, 'mask', MaskC.mask_array}, ...
+                netG.eval({'original_images', original_images, 'mask', maskC.mask_array}, ...
                     {'mse_loss', 1}, 'holdOn', 0);
                 
                 mseLoss = netG.getVar('mse_loss');
@@ -326,43 +326,8 @@ function state = accumulateGradients(net, state, params, batchSize, parserv)
         end
     end
 end
-% local area and mask array
-function Mask = createRandomMask(batch_images_size, local_area_size, mask_range)
-    images_h = batch_images_size(1);
-    images_w = batch_images_size(2);
-    
-    local_area_h = local_area_size(1);
-    local_area_w = local_area_size(2);
-    
-    if images_h < local_area_h || images_w < local_area_w
-        error('images size should not smaller than local size');
-    end
-    if mask_range(1) > mask_range(2)
-        error('wrong mask range');
-    end
-    if mask_range(2) > local_area_h || mask_range(2) > local_area_w
-        error('max mask size should not bigger than local area size');
-    end
-    
-    local_area_h_start = randi( [1, images_h-local_area_h+1], 1, 1);
-    local_area_w_start = randi( [1, images_w-local_area_w+1], 1, 1);
-    
-    mask_size = randi(mask_range, 1, 2);
-    mask_h = mask_size(1);
-    mask_w = mask_size(2);
-    
-    mask_h_start = randi( [1, local_area_h-mask_h+1], 1, 1) + local_area_h_start-1;
-    mask_w_start = randi( [1, local_area_w-mask_w+1], 1, 1) + local_area_w_start-1;
-    
-    mask_array = zeros(batch_images_size);
-    mask_array(mask_h_start:mask_h_start+mask_h-1, mask_w_start:mask_w_start+mask_w-1, :, :) = 1;
-    
-    Mask.local_area_size = local_area_size;
-    Mask.local_area_left_top_point = [local_area_h_start, local_area_w_start];
-    Mask.mask_array = mask_array;
-end
- 
-function local_area = crop_local_area(batch_images, Mask)
+% get local area
+function local_area = get_local_area(batch_images, Mask)
     la_h_s = Mask.local_area_left_top_point(1);
     la_w_s = Mask.local_area_left_top_point(2);
     la_size_h = Mask.local_area_size(1);

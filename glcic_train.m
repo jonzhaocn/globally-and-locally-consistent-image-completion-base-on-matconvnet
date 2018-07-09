@@ -31,7 +31,7 @@ function [netG, netD, info] = glcic_train(varargin)
     if ~exist(sprintf('%s/%s',opts.dataDir, save_dir_name), 'dir')
       preprocess_celeba(opts.dataDir, save_dir_name);
     end
-    d = dir(sprintf('%s/%s/*.jpg',opts.dataDir, save_dir_name));
+    d = dir(sprintf('%s/%s/*.jpg', opts.dataDir, save_dir_name));
     imdb.images.name = cell(numel(d),1);
     imdb.imageDir = fullfile(opts.dataDir, save_dir_name);
     for i=1:numel(d)
@@ -49,12 +49,12 @@ function [netG, netD, info] = glcic_train(varargin)
     
     % Meta parameters
     meta.inputSize = [96 96 3] ;
-    meta.augmentation.jitterLocation = false ;
-    meta.augmentation.jitterFlip = false ;
+    meta.augmentation.jitterLocation = true ;
+    meta.augmentation.jitterFlip = true ;
     meta.augmentation.jitterBrightness = 0 ;
     meta.augmentation.jitterAspect = 0 ;
     % train options 
-    lr = logspace(-3, -6, 20);
+    lr = logspace(-3, -4, 20);
     meta.trainOpts.learningRate =  lr;
     meta.trainOpts.numEpochs = numel(lr) ;
     meta.trainOpts.batchSize = 64 ;
@@ -65,6 +65,7 @@ function [netG, netD, info] = glcic_train(varargin)
     % 
     meta.normalization.averageImage = [];
     meta.normalization.imageSize = [128 128 3];
+    
     meta.normalization.cropSize = 128/178;
     % -------------------------------------------------------------------------
     %                                                                     Learn
