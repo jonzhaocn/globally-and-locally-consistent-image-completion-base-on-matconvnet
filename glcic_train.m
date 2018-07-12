@@ -49,8 +49,8 @@ function [netG, netD, info] = glcic_train(varargin)
     
     % Meta parameters
     meta.inputSize = [96 96 3] ;
-    meta.augmentation.jitterLocation = true ;
-    meta.augmentation.jitterFlip = true ;
+    meta.augmentation.jitterLocation = 1 ;
+    meta.augmentation.jitterFlip = 1 ;
     meta.augmentation.jitterBrightness = 0 ;
     meta.augmentation.jitterAspect = 0 ;
     % train options 
@@ -60,7 +60,7 @@ function [netG, netD, info] = glcic_train(varargin)
     meta.trainOpts.batchSize = 64 ;
     meta.trainOpts.weightDecay = 0.0005 ;
     meta.trainOpts.sample_save_per_batch_count = 100;
-    meta.trainOpts.mask_range = [32, 32];
+    meta.trainOpts.mask_range = [32, 64];
     meta.trainOpts.local_area_size = [64, 64];
     % 
     meta.normalization.averageImage = [];
