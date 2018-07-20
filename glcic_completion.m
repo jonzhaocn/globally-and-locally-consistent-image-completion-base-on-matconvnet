@@ -7,7 +7,7 @@ opts.expDir = fullfile(vl_rootnn, 'exp', 'celeba-glcic') ;
 opts.dataDir = fullfile(vl_rootnn, 'data','celeba') ;
 opts.testDir = fullfile(opts.dataDir, 'cropped_for_glcic_test');
 opts.saveDir = './results';
-opts.mask_range = [32, 32];
+opts.mask_range = [64, 64];
 opts.local_area_size = [64, 64];
 opts.batch_size = 64;
 
@@ -88,15 +88,17 @@ function complete_images(opts, read_images_opts)
         images_batch = gather(images_batch);
         % save images
         for j=1:size(images_batch, 4)
+            % whether i should use the imsingle2uint8 function
+            % !!!!
             [~, images_name, ~] = fileparts(char(images_path_batch(j)));
             name = sprintf('%s_original.png', images_name);
-            imwrite(images_batch(:,:,:,j), fullfile(opts.saveDir, name));
+            imwrite(imsingle2uint8(images_batch(:,:,:,j)), fullfile(opts.saveDir, name));
             
             name = sprintf('%s_masked.png', images_name);
-            imwrite(masked_images(:,:,:,j), fullfile(opts.saveDir, name));
+            imwrite(imsingle2uint8(masked_images(:,:,:,j)), fullfile(opts.saveDir, name));
             
             name = sprintf('%s_completed.png', images_name);
-            imwrite(completed_images(:,:,:,j), fullfile(opts.saveDir, name));
+            imwrite(imsingle2uint8(completed_images(:,:,:,j)), fullfile(opts.saveDir, name));
         end
     end
 
@@ -109,4 +111,15 @@ function epoch = findLastCheckpoint(modelDir)
     tokens = regexp({list.name}, 'net-epoch-([\d]+).mat', 'tokens') ;
     epoch = cellfun(@(x) sscanf(x{1}{1}, '%d'), tokens) ;
     epoch = max([epoch 0]) ;
+end
+% -------------------------------------------------------------------------
+function imo = imsingle2uint8(im)
+% -------------------------------------------------------------------------
+    mini = min(im(:));
+    im = im - mini;
+    maxi = max(im(:));
+    if maxi<=0
+        maxi = 1;
+    end
+    imo = uint8(255 * im ./ maxi);
 end

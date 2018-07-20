@@ -56,7 +56,7 @@ function [netG, netD, info] = glcic_train(varargin)
     % train options 
     lr = logspace(-3, -4, 20);
     meta.trainOpts.learningRate =  lr;
-    meta.trainOpts.numEpochs = numel(lr) ;
+    meta.trainOpts.numEpochs = 20 ;
     meta.trainOpts.batchSize = 64 ;
     meta.trainOpts.weightDecay = 0.0005 ;
     meta.trainOpts.sample_save_per_batch_count = 100;
