@@ -1,8 +1,13 @@
+% glcic_train_dagnn demonstrates training the network using the DagNN wrapper
+% input:
+%   netG: a instance, the completed network
+%   netD: a instance, the local and global discriminator 
+%   imdb: a struct with 2 fields: 
+%       images
+%       imageDir
+%   getBatch: a function handle to get batch data for training
+%   varargin: setting
 function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varargin)
-% GLCIC_TRAIN_DAGNN demonstrates training a global and local consistent image completion GAN using the DagNN wrapper
-
-% This file is part of the VLFeat library and is made available under
-% the terms of the BSD license (see the COPYING file).
 
     opts.expDir = fullfile('data','exp') ;
     opts.continue = true ;
@@ -20,7 +25,9 @@ function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varar
     opts.solver = @solver.adam ; 
     opts.solverOpts.beta1 = 0.5 ;
     opts.sample_save_per_batch_count = 100;
+    % mask range is the range of each side's length
     opts.mask_range = [32, 64];
+    % local area is the input of local discriminator
     opts.local_area_size = [64, 64];
     
     [opts, varargin] = vl_argparse(opts, varargin) ;
@@ -75,7 +82,7 @@ function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varar
     % -------------------------------------------------------------------------
     %                                                        Train and validate
     % -------------------------------------------------------------------------
-
+    % try to load the model has been saved
     modelPath = @(ep) fullfile(opts.expDir, sprintf('net-epoch-%d.mat', ep));
     modelFigPath = fullfile(opts.expDir, 'net-train.pdf') ;
 
@@ -104,7 +111,9 @@ function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varar
         params.val = opts.val(randperm(numel(opts.val))) ;
         params.imdb = imdb ;
         params.getBatch = getBatch ;
+        % save a sample image per x batch
         params.sample_save_per_batch_count = opts.sample_save_per_batch_count;
+        % the training process is divided into three parts
         if epoch == 1
             params.trainingObject = 'generator';
             params.epochPercentage = 1;
@@ -117,6 +126,7 @@ function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varar
         end
 
         if numel(opts.gpus) <= 1
+            % process a epoch 
             [netG, netD, state] = process_epoch(netG, netD, state, params, 'train') ;
             if ~evaluateMode
                 saveState(modelPath(epoch), netG, netD, state) ;

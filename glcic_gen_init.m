@@ -1,3 +1,4 @@
+% init the completion network
 function net = glcic_gen_init(varargin)
     opts.cudnnWorkspaceLimit = 1024*1024*1024;
     opts = vl_argparse(opts, varargin) ;
@@ -57,12 +58,14 @@ function net = glcic_gen_init(varargin)
         [name '_tanh']) ;
     lastAdded.var = [name '_tanh'];
     
+    % combine the convolutional output and the masked image to complete
+    % the image
     net.addLayer('combine_generator_result_and_source', ...
         dagnn.CombineGeneratorResultAndSource(), ...
         {lastAdded.var, 'original_images', 'mask'}, ...
         'completed_images');
     net.vars(net.getVarIndex('completed_images')).precious = 1;
-    
+    % add a mse loss layer
     net.addLayer('mse_loss', ...
         dagnn.MSELoss(), ...
         {'completed_images', 'original_images', 'mask'}, ...

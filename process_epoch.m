@@ -1,5 +1,11 @@
-function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
-    % initialize with momentum 0
+% process a epoch when training the networks
+% input:
+%   netG: a instance, the completed network
+%   netD: a instance, the local and global discriminator
+%   state: a struct to store vars for update network
+%   parmas: setting
+%   mode: normal or test
+function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)    % initialize with momentum 0
     if isempty(state) || isempty(state.solverStateG) || isempty(state.solverStateD)
         state.solverStateG = cell(1, numel(netG.params)) ;
         state.solverStateG(:) = {0} ;
@@ -61,12 +67,14 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
     stats.errorG = 0;
     stats.errorD = 0;
     
+    % don't have to complete the whole epoch as need
     if params.epochPercentage > 1
         params.epochPercentage =1;
     elseif params.epochPercentage <= 0
         params.epochPercentage = 0.1;
     end
     subset = subset(1: round(numel(subset)*params.epochPercentage) );
+    
     % --------------
     % get batch and train
     % --------------
@@ -82,7 +90,8 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
         batch = subset(batchStart : params.numSubBatches * numlabs : batchEnd) ;
         num = num + numel(batch) ;
         if numel(batch) == 0, continue ; end
-
+        
+        % get images as input
         inputs = params.getBatch(params.imdb, batch) ;
 
         if params.prefetch
@@ -95,12 +104,15 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
             nextBatch = subset(batchStart : params.numSubBatches * numlabs : batchEnd) ;
             params.getBatch(params.imdb, nextBatch) ;
         end
-        
+        % create random mask 
         maskC = create_random_mask(size(inputs{2}), params.local_area_size, params.mask_range);
         maskD = create_random_mask(size(inputs{2}), params.local_area_size, params.mask_range);
+        
         original_images = inputs{2};
         labelFake = zeros(1, 1, 1, numel(batch), 'single');
         labelReal = ones(1, 1, 1, numel(batch), 'single');
+        
+        % if using gpus, convert the array to gpuArray
         if numGpus>0
             maskC = structfun(@gpuArray, maskC, 'UniformOutput', false) ;
             maskD = structfun(@gpuArray, maskD, 'UniformOutput', false) ;
@@ -113,7 +125,11 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
         % --------------------
         if strcmp(params.trainingObject, "generator")
             netG.mode = 'normal';
+            % if the accumulateParamDers is equal to 0, the derivative will
+            % be recalculated in a bp
             netG.accumulateParamDers = 0;
+            % eval({input},{ders}) will complete a forward propagation and
+            % a backward propagation
             netG.eval({'original_images', original_images, 'mask', maskC.mask_array}, ...
                 {'mse_loss', 1});
             mseLoss = netG.getVar('mse_loss');
@@ -124,9 +140,13 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
             state.solverState = state.solverStateG;
             state = accumulateGradients(netG, state, params, batchSize, parserv);
             state.solverStateG = state.solverState;
+            
         elseif strcmp(params.trainingObject, "discriminator") || strcmp(params.trainingObject, "combination")
             netG.mode = 'normal';
+            % netG.eval({input}) complete a forward propagation without a
+            % backward propagation
             netG.eval({'original_images', original_images, 'mask', maskC.mask_array});
+            % get the completed images
             completedImages = netG.getVar('completed_images');
             completedImages = completedImages.value;
             
@@ -139,6 +159,8 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
             errorFake = netD.getVar('sigmoid_cross_entropy_loss');
             errorFake = gather(errorFake.value);
             % -----
+            % set the accumulateParamDers to be 1 beacause the netD should
+            % forward and backward twice to accumulate the derivatives
             netD.accumulateParamDers = 1 ;
             local_images_area = get_local_area(original_images, maskD);
             netD.eval({'local_disc_input',local_images_area, 'global_disc_input', original_images, 'labels',labelReal, ...
@@ -160,6 +182,8 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
                     'multiply_alpha', true}, {'sigmoid_cross_entropy_loss', 1}, 'holdOn', 0);
                 errorG = netD.getVar('sigmoid_cross_entropy_loss');
                 errorG = gather(errorG.value);
+                % get the derivative from local dicriminator and the global
+                % dicriminator for generator's backwarking
                 df_dg = get_der_from_discriminator(netD, maskC);
                 % cleanup der
                 for p=1:numel(netD.params)
@@ -171,8 +195,7 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)
                 % eval generator
                 netG.mode = 'normal';
                 netG.accumulateParamDers = 0;
-                % netG can use backward propagation from the completed
-                % images layer instead of the loss layer
+                % netG can use backward propagation from the completed_images layer instead of the loss layer
                 netG.eval({'original_images', original_images, 'mask', maskC.mask_array}, ...
                     {'completed_images', df_dg}, 'holdOn', 1);
                 % calculate the mse loss of the generator
@@ -328,25 +351,28 @@ function state = accumulateGradients(net, state, params, batchSize, parserv)
 end
 % get local area
 function local_area = get_local_area(batch_images, Mask)
-    la_h_s = Mask.local_area_left_top_point(1);
-    la_w_s = Mask.local_area_left_top_point(2);
+    la_h_s = Mask.local_area_top_left_point(1);
+    la_w_s = Mask.local_area_top_left_point(2);
     la_size_h = Mask.local_area_size(1);
     la_size_w = Mask.local_area_size(2);
     local_area = batch_images(la_h_s:la_h_s+la_size_h-1, la_w_s:la_w_s+la_size_w-1, :, :);
 end
+% get the derivative from local dicriminator and the global
+% dicriminator for generator's backwarking
 function der = get_der_from_discriminator(netD, Mask)
     netD_local_input_der = netD.getVar('local_disc_input');
     netD_local_input_der = netD_local_input_der.der;
     netD_global_input_der = netD.getVar('global_disc_input');
     netD_global_input_der = netD_global_input_der.der;
     der = netD_global_input_der;
-    la_h_s = Mask.local_area_left_top_point(1);
-    la_w_s = Mask.local_area_left_top_point(2);
+    la_h_s = Mask.local_area_top_left_point(1);
+    la_w_s = Mask.local_area_top_left_point(2);
     la_size_h = Mask.local_area_size(1);
     la_size_w = Mask.local_area_size(2);
     der(la_h_s:la_h_s+la_size_h-1, la_w_s:la_w_s+la_size_w-1, :, :) = ...
         der(la_h_s:la_h_s+la_size_h-1, la_w_s:la_w_s+la_size_w-1, :, :) + netD_local_input_der;
 end
+% save a sample
 function save_sample_images(images, arrangement, path)
     if isa(images, 'gpuArray')
         images = gather(images);

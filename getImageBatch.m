@@ -1,5 +1,10 @@
-function data = getImageBatch(imagePaths, varargin)
 % GETIMAGEBATCH  Load and jitter a batch of images
+% input:
+%   imagePaths: a cell array of images' path
+%   varargin: setting
+% output:
+%   a 4 dims array that is images data
+function data = getImageBatch(imagePaths, varargin)
 
 opts.useGpu = false ;
 opts.prefetch = false ;
@@ -19,6 +24,13 @@ opts.jitterContrast = 0 ;
 opts.jitterSaturation = 0 ;
 
 opts = vl_argparse(opts, varargin);
+
+% the whole process is crop firstly and then resize the image according to
+% the imageSize
+
+% cropping is determined by the CropAnisotropy and cropSize
+% CropAnisotropy is equal to WCrop/HCrop
+
 
 args{1} = {imagePaths, ...
            'NumThreads', opts.numThreads, ...

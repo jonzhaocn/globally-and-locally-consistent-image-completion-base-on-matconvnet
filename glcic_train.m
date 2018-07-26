@@ -1,9 +1,9 @@
-function [netG, netD, info] = glcic_train(varargin)
-% GLCIC_TRAIN demonstrates training a global and local consistent image completion gan on CelebA 
+% entry program of the training process
+
+% glcic_train demonstrates training a global and local consistent image completion gan on CelebA 
 % global and local consistent image completion
 
-% This file is part of the VLFeat library and is made available under
-% the terms of the BSD license (see the COPYING file).
+function [netG, netD, info] = glcic_train(varargin)
 
     run(fullfile(fileparts(mfilename('fullpath')), ...
       '..','..', 'matlab', 'vl_setupnn.m')) ;
@@ -47,25 +47,34 @@ function [netG, netD, info] = glcic_train(varargin)
     % discriminator model
     netD = glcic_disc_init;
     
-    % Meta parameters
-    meta.inputSize = [96 96 3] ;
+    % the process is cropping firstly and then resize the image according to the imageSize
+    
+    % if the jitterLocation is equal to 1, the crop location will be random,
+    % if no the result will crop from the center in image
     meta.augmentation.jitterLocation = 1 ;
+    % if jitterFilp equals 1, randomly flips a crop horizontally with 50% probability.
     meta.augmentation.jitterFlip = 1 ;
-    meta.augmentation.jitterBrightness = 0 ;
+    % jitterAspect = Wcrop/Hcrop, a value of [0 0] or 0 stretches the crop to fit the input image. 
     meta.augmentation.jitterAspect = 0 ;
+    meta.augmentation.jitterScale = 1 ;
+    meta.augmentation.jitterBrightness = 0 ;
     % train options 
     lr = logspace(-3, -4, 20);
     meta.trainOpts.learningRate =  lr;
-    meta.trainOpts.numEpochs = 20 ;
+    meta.trainOpts.numEpochs = 21 ;
     meta.trainOpts.batchSize = 64 ;
     meta.trainOpts.weightDecay = 0.0005 ;
+    % save a sample image per x batchs
     meta.trainOpts.sample_save_per_batch_count = 100;
+    % the range of each side of the mask is [32,64]
     meta.trainOpts.mask_range = [32, 64];
+    % the input size of local discriminator is 64*64
     meta.trainOpts.local_area_size = [64, 64];
     % 
     meta.normalization.averageImage = [];
+    % imageSize is the final output size
     meta.normalization.imageSize = [128 128 3];
-    
+    % the cropSize in vl_imreadjpeg is equal to meta.normalization.cropSize*jitterScale
     meta.normalization.cropSize = 128/178;
     % -------------------------------------------------------------------------
     %                                                                     Learn

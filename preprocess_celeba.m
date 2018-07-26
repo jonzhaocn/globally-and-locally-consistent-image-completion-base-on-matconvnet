@@ -1,10 +1,11 @@
-function preprocess_celeba(data_dir, save_dir_name)
-    % PREPROCESS_CELEBA prepares celeba data for training
+% preprocess_celeba prepares celeba data for training
+% opeartion order: (1)crop  (2)resize
+% input:
+%   data_dir: a string that points out the images folder
+%   save_dir_name: a string that points out the saving folder
 
-    % This file is part of the VLFeat library and is made available under
-    % the terms of the BSD license (see the COPYING file).
-    
-    % opeartion order: (1)crop  (2)resize
+function preprocess_celeba(data_dir, save_dir_name)
+ 
     crop_size = [178, 178];
     resize_size = [178, 178];
 

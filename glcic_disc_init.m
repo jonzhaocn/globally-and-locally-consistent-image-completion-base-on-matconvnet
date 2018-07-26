@@ -1,3 +1,4 @@
+% init the global and the local discrimiator
 function net = glcic_disc_init(varargin)
     opts.cudnnWorkspaceLimit = 1024*1024*1024;
     opts = vl_argparse(opts, varargin) ;
@@ -11,7 +12,7 @@ function net = glcic_disc_init(varargin)
     [net, ld_lastAdded] = glcic_add_conv_block(net, opts, ld_lastAdded, 'local_disc_layer_3', 5, 2, 1, 256);
     [net, ld_lastAdded] = glcic_add_conv_block(net, opts, ld_lastAdded, 'local_disc_layer_4', 5, 2, 1, 512);
     [net, ld_lastAdded] = glcic_add_conv_block(net, opts, ld_lastAdded, 'local_disc_layer_5', 5, 2, 1, 512);
-    % local discriminator's input size is 64*64, after 5 conv layer, size
+    % local discriminator's input size is 64*64, after 5 conv layer, the output size
     % is 2*2, add a fully connected layer
     name = 'local_disc_layer_6';
     net.addLayer([name  '_conv'], ...
@@ -35,7 +36,7 @@ function net = glcic_disc_init(varargin)
     [net, gd_lastAdded] = glcic_add_conv_block(net, opts, gd_lastAdded, 'global_disc_layer_4', 5, 2, 1, 512);
     [net, gd_lastAdded] = glcic_add_conv_block(net, opts, gd_lastAdded, 'global_disc_layer_5', 5, 2, 1, 512);
     [net, gd_lastAdded] = glcic_add_conv_block(net, opts, gd_lastAdded, 'global_disc_layer_6', 5, 2, 1, 512);
-    % global discriminator's input size is 128*128, after 6 conv layer, size
+    % global discriminator's input size is 128*128, after 6 conv layer, the output size
     % is 2*2, add a fully connected layer
     name = 'global_disc_layer_7';
     net.addLayer([name  '_conv'], ...
@@ -73,7 +74,7 @@ function net = glcic_disc_init(varargin)
 
     net.vars(net.getVarIndex('logits')).precious = 1;
     
-    % add loss layer
+    % add a cross entropy loss layer
     net.addLayer('sigmoid_cross_entropy_loss', ...
     dagnn.SigmoidCrossEntropyLoss(),...
     {'logits', 'labels', 'multiply_alpha'},...

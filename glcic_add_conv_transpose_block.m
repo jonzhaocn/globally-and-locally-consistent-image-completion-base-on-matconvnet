@@ -1,3 +1,12 @@
+% add a Convolutional + BatchNorm + ReLU block
+% input:
+%   net: a network structure
+%   lastAdded: a structure has two properties:{var,depth},var is the name
+%   of last added var,depth is the channel of last layer
+%   name: name of the block
+% output:
+%   net:
+%   lastAdded
 function [net, lastAdded] = glcic_add_conv_transpose_block(net, opts, lastAdded, name, ksize, upsample, depth, varargin)
     % Helper function to add a Convolutional + BatchNorm + ReLU
     % sequence to the network.
