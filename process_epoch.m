@@ -4,7 +4,7 @@
 %   netD: a instance, the local and global discriminator
 %   state: a struct to store vars for update network
 %   parmas: setting
-%   mode: 'normal' or 'test'
+%   mode: 'train' or 'val'
 function [net, state] = process_epoch(net, state, params, mode)
     netG = net(1);
     netD = net(2);
@@ -93,42 +93,39 @@ function [net, state] = process_epoch(net, state, params, mode)
         fprintf('%s: epoch %02d: %3d/%3d:', mode, epoch, ...
             batchIndex, totalBatch) ;
         batchSize = min(params.batchSize, numel(subset) - t + 1) ;
-        % 
-        for s=1:params.numSubBatches
-            % get this image batch and prefetch the next
-            batchStart = t + (labindex-1) + (s-1) * numlabs;
-            batchEnd = min(t+params.batchSize-1, numel(subset)) ;
-            batch = subset(batchStart : params.numSubBatches * numlabs : batchEnd) ;
-            num = num + numel(batch) ;
-            if numel(batch) == 0, continue ; end
-            % get images as input
-            inputs = params.getBatch(params.imdb, batch) ;
-            
-            if params.prefetch
-                if s == params.numSubBatches
-                    batchStart = t + (labindex-1) + params.batchSize ;
-                    batchEnd = min(t+2*params.batchSize-1, numel(subset)) ;
-                else
-                    batchStart = batchStart + numlabs ;
-                end
-                nextBatch = subset(batchStart : params.numSubBatches * numlabs : batchEnd) ;
-                params.getBatch(params.imdb, nextBatch) ;
-            end
-            % create random mask
-            maskC = create_random_mask(size(inputs{2}), params.local_area_size, params.mask_range);
-            maskD = create_random_mask(size(inputs{2}), params.local_area_size, params.mask_range);
-            
-            original_images = inputs{2};
-            labelFake = zeros(1, 1, 1, numel(batch), 'single');
-            labelReal = ones(1, 1, 1, numel(batch), 'single');
-            
-            % if using gpus, convert the array to gpuArray
-            if numGpus>0
-                maskC = structfun(@gpuArray, maskC, 'UniformOutput', false) ;
-                maskD = structfun(@gpuArray, maskD, 'UniformOutput', false) ;
-                labelFake = gpuArray(labelFake);
-                labelReal = gpuArray(labelReal);
-            end
+        %
+        % get this image batch and prefetch the next
+        batchStart = t + (labindex-1) ;
+        batchEnd = min(t+params.batchSize-1, numel(subset)) ;
+        batch = subset(batchStart : params.numSubBatches * numlabs : batchEnd) ;
+        num = num + numel(batch) ;
+        if numel(batch) == 0, continue ; end
+        % get images as input
+        inputs = params.getBatch(params.imdb, batch) ;
+        
+        if params.prefetch
+            batchStart = t + (labindex-1) + params.batchSize ;
+            batchEnd = min(t+2*params.batchSize-1, numel(subset)) ;
+            nextBatch = subset(batchStart : params.numSubBatches * numlabs : batchEnd) ;
+            params.getBatch(params.imdb, nextBatch) ;
+        end
+        % create random mask
+        maskC = create_random_mask(size(inputs{2}), params.local_area_size, params.mask_range);
+        maskD = create_random_mask(size(inputs{2}), params.local_area_size, params.mask_range);
+        
+        original_images = inputs{2};
+        labelFake = zeros(1, 1, 1, numel(batch), 'single');
+        labelReal = ones(1, 1, 1, numel(batch), 'single');
+        
+        % if using gpus, convert the array to gpuArray
+        if numGpus>0
+            maskC = structfun(@gpuArray, maskC, 'UniformOutput', false) ;
+            maskD = structfun(@gpuArray, maskD, 'UniformOutput', false) ;
+            labelFake = gpuArray(labelFake);
+            labelReal = gpuArray(labelReal);
+        end
+        
+        if strcmp(mode, 'train')
             % -------------------
             % training object
             % --------------------
@@ -141,12 +138,11 @@ function [net, state] = process_epoch(net, state, params, mode)
                 % a backward propagation
                 netG.eval({'original_images', original_images, 'mask', maskC.mask_array}, ...
                     {'mse_loss', 1});
-                mseLoss = netG.getVar('mse_loss');
-                mseLoss = gather(mseLoss.value);
+                GLoss = netG.getVar('mse_loss');
+                GLoss = gather(GLoss.value);
                 % mseLoss should be a scalar
-                GLoss = mseLoss;
                 % update netG
-                stateG = accumulateGradients(netG, stateG, params, batchSize, parservG);
+                stateG = accumulateGradients(netG, stateG, params, size(original_images, 4), parservG);
                 
             elseif strcmp(params.trainingObject, "discriminator") || strcmp(params.trainingObject, "combination")
                 netG.mode = 'normal';
@@ -160,43 +156,29 @@ function [net, state] = process_epoch(net, state, params, mode)
                 % train discriminator with fake and real data
                 netD.mode = 'normal' ;
                 netD.accumulateParamDers = 0 ;
-                local_images_area = get_local_area(completedImages, maskC);
-                netD.eval({'local_disc_input',local_images_area, 'global_disc_input',completedImages , 'labels',labelFake, ...
-                    'multiply_alpha', false}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 1) ;
-                ImageFakeDLoss = netD.getVar('sigmoid_cross_entropy_loss');
-                ImageFakeDLoss = gather(ImageFakeDLoss.value);
-                % -----
-                % set the accumulateParamDers to be 1 beacause the netD should
-                % forward and backward twice to accumulate the derivatives
-                netD.accumulateParamDers = 1 ;
-                local_images_area = get_local_area(original_images, maskD);
-                netD.eval({'local_disc_input',local_images_area, 'global_disc_input', original_images, 'labels',labelReal, ...
+                local_images_area_fake = get_local_area(completedImages, maskC);
+                local_images_area_real = get_local_area(original_images, maskD);
+                netD.eval({'local_disc_input', cat(4, local_images_area_fake, local_images_area_real),...
+                    'global_disc_input',cat(4, completedImages, original_images) , ...
+                    'labels',cat(4, labelFake, labelReal), ...
                     'multiply_alpha', false}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 0) ;
-                
-                ImageRealDLoss = netD.getVar('sigmoid_cross_entropy_loss');
-                ImageRealDLoss = gather(ImageRealDLoss.value);
-                DLoss = ImageFakeDLoss + ImageRealDLoss;
+                DLoss = netD.getVar('sigmoid_cross_entropy_loss');
+                DLoss = gather(DLoss.value);
                 % update netD
-                stateD = accumulateGradients(netD, stateD, params, 2 * batchSize, parservD);
+                stateD = accumulateGradients(netD, stateD, params, 2 * size(original_images, 4), parservD);
+                
                 % --------------------------------
                 if strcmp(params.trainingObject, "combination")
                     % calculate the gan loss of generator
                     netD.accumulateParamDers = 0 ;
-                    local_images_area = get_local_area(completedImages, maskC);
-                    netD.eval({'local_disc_input', local_images_area, 'global_disc_input',completedImages , 'labels',labelReal, ...
+                    netD.eval({'local_disc_input', local_images_area_fake, 'global_disc_input',completedImages , 'labels',labelReal, ...
                         'multiply_alpha', true}, {'sigmoid_cross_entropy_loss', 1}, 'holdOn', 0);
                     GLoss = netD.getVar('sigmoid_cross_entropy_loss');
                     GLoss = gather(GLoss.value);
                     % get the derivative from local dicriminator and the global
                     % dicriminator for generator's backwarking
                     df_dg = get_der_from_discriminator(netD, maskC);
-                    % cleanup der
-                    for p=1:numel(netD.params)
-                        netD.params(p).der = [];
-                    end
-                    for v=1:numel(netD.vars)
-                        netD.vars(v).der = [];
-                    end
+                    
                     % eval generator
                     netG.mode = 'normal';
                     netG.accumulateParamDers = 0;
@@ -212,11 +194,25 @@ function [net, state] = process_epoch(net, state, params, mode)
                     mseLoss = gather(mseLoss.value);
                     GLoss = GLoss + mseLoss;
                     % update netG
-                    stateG = accumulateGradients(netG, stateG, params, batchSize, parservG);
+                    stateG = accumulateGradients(netG, stateG, params, size(original_images, 4), parservG);
                 end
             else
                 error('wrong params.trainingObject:%s', params.trainingObject);
             end
+            % test mode
+        else
+            netG.mode = 'normal';
+            netG.forward({'original_images', original_images, 'mask', maskC.mask_array})
+            completedImages = netG.getVar('completed_images');
+            completedImages = completedImages.value;
+            
+            netD.mode = 'normal';
+            local_images_area_fake = get_local_area(completedImages, maskC);
+            local_images_area_real = get_local_area(original_images, maskD);
+            netD.eval({'local_disc_input', cat(4, local_images_area_fake, local_images_area_real),...
+                'global_disc_input',cat(4, completedImages, original_images) , ...
+                'labels',cat(4, labelFake, labelReal), ...
+                'multiply_alpha', false}) ;
         end
 
         % Get statistics.
@@ -236,36 +232,41 @@ function [net, state] = process_epoch(net, state, params, mode)
             adjustTime = 4*batchTime - time ;
             stats.time = time + adjustTime ;
         end
-        % loss may get inf values
-        switch params.trainingObject
-            case 'generator'
-                stats.GLoss = stats.GLoss + GLoss;
-                fprintf(' GLoss: %.3f', GLoss/(batchSize/numlabs)) ;
-            case 'discriminator'
-                stats.DLoss = stats.DLoss + DLoss;
-                fprintf(' DLoss: %.3f', DLoss/(batchSize * 2/numlabs));
-            case 'combination'
-                stats.GLoss = stats.GLoss + GLoss;
-                stats.DLoss = stats.DLoss + DLoss;
-                fprintf(' GLoss: %.3f DLoss: %.3f', GLoss/(batchSize/numlabs), DLoss/(batchSize * 2/numlabs)) ;
-            otherwise
-                error('wrong training object')
+        fprintf(' %.1f (%.1f) Hz', averageSpeed, currentSpeed) ;
+        
+        if strcmp(mode, 'train')
+            switch params.trainingObject
+                case 'generator'
+                    stats.GLoss = stats.GLoss + GLoss;
+                    fprintf('\t GLoss: %.3f\n', GLoss/(batchSize/numlabs)) ;
+                case 'discriminator'
+                    stats.DLoss = stats.DLoss + DLoss;
+                    fprintf('\t DLoss: %.3f\n', DLoss/(batchSize * 2/numlabs));
+                case 'combination'
+                    stats.GLoss = stats.GLoss + GLoss;
+                    stats.DLoss = stats.DLoss + DLoss;
+                    fprintf('\t GLoss: %.3f DLoss: %.3f\n', GLoss/(batchSize/numlabs), DLoss/(batchSize * 2/numlabs)) ;
+                otherwise
+                    error('wrong training object')
+            end
+            % ----------
+            % save sample images
+            % ----------
+            if mod(batchIndex, params.sample_save_per_batch_count)==0
+                path = sprintf('./pics/epoch_%d_labindex_%d_%d.png', params.epoch, labindex, batchIndex);
+                completedImages = netG.getVar('completed_images');
+                completedImages = completedImages.value;
+                save_sample_images(completedImages, [4, 4], path);
+                fprintf('save sample images as %s\n.', path);
+            end
         end
-        fprintf(' %.1f (%.1f) Hz\n', averageSpeed, currentSpeed) ;
-        % ----------
-        % save sample images
-        % ----------
-        if mod(batchIndex, params.sample_save_per_batch_count)==0
-           path = sprintf('./pics/epoch_%d_labindex_%d_%d.png', params.epoch, labindex, batchIndex);
-           completedImages = netG.getVar('completed_images');
-           completedImages = completedImages.value;
-           save_sample_images(completedImages, [4, 4], path);
-           fprintf('save sample images as %s\n.', path);
-        end
+        
     end
     
-    stats.GLoss = stats.GLoss / numel(subset) * numlabs ;
-    stats.DLoss = stats.DLoss / numel(subset) * numlabs;
+    if strcmp(mode, 'train')
+        stats.GLoss = stats.GLoss / numel(subset) * numlabs ;
+        stats.DLoss = stats.DLoss / numel(subset) * numlabs;
+    end
     
     % Save back to state.
     stateG.stats.(mode) = stats ;

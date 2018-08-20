@@ -150,9 +150,12 @@ function [net, stats] = glcic_train_dagnn(net, imdb, getBatch, varargin)
             end
             lastStats = accumulateStats(lastStats);
         end
-
-        stats.train(epoch) = lastStats.train ;
-        stats.val(epoch) = struct() ;
+        if isfield(lastStats, 'train')
+            stats.train(epoch) = lastStats.train ;
+        end
+        if isfield(lastStats, 'val')
+            stats.val(epoch) = lastStats.val ;
+        end
         clear lastStats ;
         saveStats(modelPath(epoch), stats) ;
 
@@ -207,8 +210,14 @@ end
 % -------------------------------------------------------------------------
 function stats = accumulateStats(stats_)
 % -------------------------------------------------------------------------
-
-    for s = {'train', 'val'}
+    fields = {};
+    if isfield(stats_{1}, 'train')
+        fields{end+1} = 'train';
+    end
+    if isfield(stats_{1}, 'val')
+        fields{end+1} = 'val';
+    end
+    for s = fields
         s = char(s) ;
         total = 0 ;
 
