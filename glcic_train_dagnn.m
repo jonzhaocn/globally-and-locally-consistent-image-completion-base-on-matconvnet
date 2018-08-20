@@ -7,7 +7,7 @@
 %       imageDir
 %   getBatch: a function handle to get batch data for training
 %   varargin: setting
-function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varargin)
+function [net, stats] = glcic_train_dagnn(net, imdb, getBatch, varargin)
 
     opts.expDir = fullfile('data','exp') ;
     opts.continue = true ;
@@ -75,7 +75,7 @@ function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varar
     evaluateMode = isempty(opts.train) ;
     if ~evaluateMode
         if isempty(opts.derOutputs)
-            error('DEROUTPUTS must be specified when training.\n') ;
+            epoch_error('DEROUTPUTS must be specified when training.\n') ;
         end
     end
 
@@ -89,7 +89,7 @@ function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varar
     start = opts.continue * findLastCheckpoint(opts.expDir) ;
     if start >= 1
         fprintf('%s: resuming by loading epoch %d\n', mfilename, start) ;
-        [netG, netD, state, stats] = loadState(modelPath(start)) ;
+        [net, state, stats] = loadState(modelPath(start)) ;
     else
         state = [] ;
     end
@@ -127,13 +127,28 @@ function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varar
 
         if numel(opts.gpus) <= 1
             % process a epoch 
-            [netG, netD, state] = process_epoch(netG, netD, state, params, 'train') ;
+            [net, state] = process_epoch(net, state, params, 'train') ;
             if ~evaluateMode
-                saveState(modelPath(epoch), netG, netD, state) ;
+                saveState(modelPath(epoch), net, state) ;
             end
             lastStats = state.stats ;
         else
-            error('Multi-gpu support is not implemented!\n');
+            spmd
+                try
+                    [net, state]= process_epoch(net, state, params, 'train');
+                catch epoch_error
+                    epoch_error
+                    for j=1:numel(epoch_error.stack)
+                        epoch_error.stack(j)
+                    end
+                    rethrow(epoch_error)
+                end
+                if labindex==1 && ~evaluateMode
+                    saveState(modelPath(epoch), net, state);
+                end
+                lastStats = state.stats;
+            end
+            lastStats = accumulateStats(lastStats);
         end
 
         stats.train(epoch) = lastStats.train ;
@@ -170,27 +185,23 @@ function [netG,netD,stats] = glcic_train_dagnn(netG, netD, imdb, getBatch, varar
             print(1, modelFigPath, '-dpdf') ;
         end
  
-        if ~isempty(opts.postEpochFn)
-            if nargout(opts.postEpochFn) == 0
-                opts.postEpochFn(netG, params, state) ;
-                opts.postEpochFn(netD, params, state) ;
-            else
-                lr = opts.postEpochFn(netG, params, state) ;
-                if ~isempty(lr), opts.learningRate = lr; end
-                if opts.learningRate == 0, break; end
-            end
-        end
+%         if ~isempty(opts.postEpochFn)
+%             if nargout(opts.postEpochFn) == 0
+%                 opts.postEpochFn(net, params, state) ;
+%             else
+%                 lr = opts.postEpochFn(net, params, state) ;
+%                 if ~isempty(lr), opts.learningRate = lr; end
+%                 if opts.learningRate == 0, break; end
+%             end
+%         end
         
     end
 
     % With multiple GPUs, return one copy
-    if isa(netG, 'Composite')
-        netG = netG{1};
+    if isa(net, 'Composite')
+        net = net{1};
     end
     
-    if isa(netD, 'Composite')
-        netD = netD{1};
-    end
 end
 
 % -------------------------------------------------------------------------
@@ -235,11 +246,15 @@ function stats = extractStats(stats, net)
     end
 end
 % -------------------------------------------------------------------------
-function saveState(fileName, netG_, netD_, state)
+function saveState(fileName, net_, state)
 % -------------------------------------------------------------------------
-    netG = netG_.saveobj() ;
-    netD = netD_.saveobj() ;
-    save(fileName, 'netG', 'netD', 'state') ;
+    netG = net_(1);
+    netD = net_(2);
+
+    netG = netG.saveobj() ;
+    netD = netD.saveobj() ;
+    net = [netG, netD];
+    save(fileName, 'net', 'state') ;
 end
 % -------------------------------------------------------------------------
 function saveStats(fileName, stats)
@@ -251,11 +266,15 @@ function saveStats(fileName, stats)
     end
 end
 % -------------------------------------------------------------------------
-function [netG, netD, state, stats] = loadState(fileName)
+function [net, state, stats] = loadState(fileName)
 % -------------------------------------------------------------------------
-    load(fileName, 'netG', 'netD', 'state', 'stats') ;
+    load(fileName, 'net', 'state', 'stats') ;
+    netG = net(1);
+    netD = net(2);
     netG = dagnn.DagNN.loadobj(netG) ;
     netD = dagnn.DagNN.loadobj(netD) ;
+    net = [netG, netD];
+    
     if isempty(whos('stats'))
         error('Epoch ''%s'' was only partially saved. Delete this file and try again.', ...
             fileName) ;
@@ -300,7 +319,6 @@ function prepareGPUs(opts, cold)
             parpool('local', numGpus) ;
             cold = true ;
         end
-
     end
     if numGpus >= 1 && cold
         fprintf('%s: resetting GPU\n', mfilename)
@@ -315,3 +333,4 @@ function prepareGPUs(opts, cold)
         end
     end
 end
+

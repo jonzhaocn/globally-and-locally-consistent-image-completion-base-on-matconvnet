@@ -3,7 +3,7 @@
 % glcic_train demonstrates training a global and local consistent image completion gan on CelebA 
 % global and local consistent image completion
 
-function [netG, netD, info] = glcic_train(varargin)
+function [net, info] = glcic_train(varargin)
 
     run(fullfile(fileparts(mfilename('fullpath')), ...
       '..','..', 'matlab', 'vl_setupnn.m')) ;
@@ -16,7 +16,8 @@ function [netG, netD, info] = glcic_train(varargin)
 
     opts.numFetchThreads = 12 ;
     % opts.imdbPath = fullfile(opts.expDir, 'imdb.mat');
-    opts.train = struct('gpus', [1]) ;
+    gpus = [1];
+    opts.train = struct('gpus', gpus) ;
     opts = vl_argparse(opts, varargin) ;
 
     if ~isfield(opts.train, 'gpus')
@@ -46,6 +47,7 @@ function [netG, netD, info] = glcic_train(varargin)
     netG = glcic_gen_init;
     % discriminator model
     netD = glcic_disc_init;
+    net = [netG, netD];
     
     % the process is cropping firstly and then resize the image according to the imageSize
     
@@ -80,7 +82,7 @@ function [netG, netD, info] = glcic_train(varargin)
     %                                                                     Learn
     % -------------------------------------------------------------------------
 
-    [netG, netD, info] = glcic_train_dagnn(netG, netD, imdb, ... 
+    [net, info] = glcic_train_dagnn(net, imdb, ... 
                           getBatchFn(opts, meta), ...
                           'expDir', opts.expDir, ...
                           meta.trainOpts, ...

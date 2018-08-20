@@ -4,14 +4,21 @@
 %   netD: a instance, the local and global discriminator
 %   state: a struct to store vars for update network
 %   parmas: setting
-%   mode: normal or test
-function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)    % initialize with momentum 0
-    if isempty(state) || isempty(state.solverStateG) || isempty(state.solverStateD)
-        state.solverStateG = cell(1, numel(netG.params)) ;
-        state.solverStateG(:) = {0} ;
-        state.solverStateD = cell(1, numel(netD.params)) ;
-        state.solverStateD(:) = {0} ;
+%   mode: 'normal' or 'test'
+function [net, state] = process_epoch(net, state, params, mode)
+    netG = net(1);
+    netD = net(2);
+    % initialize with momentum 0
+    if isempty(state)
+        stateG.solverState = cell(1, numel(netG.params)) ;
+        stateG.solverState(:) = {0} ;
+        stateD.solverState = cell(1, numel(netD.params)) ;
+        stateD.solverState(:) = {0} ;
+        state = [stateG, stateD];
     end
+    
+    stateG = state(1);
+    stateD = state(2);
     
     % move CNN  to GPU as needed
     numGpus = numel(params.gpus) ;
@@ -19,29 +26,33 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)   
         netG.move('gpu') ;
         netD.move('gpu') ;
         
-        for i = 1:numel(state.solverStateG)
-            s = state.solverStateG{i} ;
+        for i = 1:numel(stateG.solverState)
+            s = stateG.solverState{i} ;
             if isnumeric(s)
-                state.solverStateG{i} = gpuArray(s) ;
+                stateG.solverState{i} = gpuArray(s) ;
             elseif isstruct(s)
-                state.solverStateG{i} = structfun(@gpuArray, s, 'UniformOutput', false) ;
+                stateG.solverState{i} = structfun(@gpuArray, s, 'UniformOutput', false) ;
             end
         end
-        for i = 1:numel(state.solverStateD)
-            s = state.solverStateD{i} ;
+        for i = 1:numel(stateD.solverState)
+            s = stateD.solverState{i} ;
             if isnumeric(s)
-                state.solverStateD{i} = gpuArray(s) ;
+                stateD.solverState{i} = gpuArray(s) ;
             elseif isstruct(s)
-                state.solverStateD{i} = structfun(@gpuArray, s, 'UniformOutput', false) ;
+                stateD.solverState{i} = structfun(@gpuArray, s, 'UniformOutput', false) ;
             end
         end
     end
     if numGpus > 1
-        error('Multi-gpu is not supported!');
-        %   parserv = ParameterServer(params.parameterServer) ;
-        %   net.setParameterServer(parserv) ;
+          parservG = ParameterServer(params.parameterServer) ;
+          netG.setParameterServer(parservG) ;
+          
+          parservD = ParameterServer(params.parameterServer) ;
+          netD.setParameterServer(parservD) ;
+          
     else
-        parserv = [] ;
+        parservG = [] ;
+        parservD = [];
     end
     
     % profile
@@ -63,10 +74,8 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)   
     stats.num = 0 ; % return something even if subset = []
     stats.time = 0 ;
     start = tic ;
-    n = 0;
-    stats.errorG = 0;
-    stats.errorD = 0;
-    
+    stats.GLoss = 0;
+    stats.DLoss = 0;
     % don't have to complete the whole epoch as need
     if params.epochPercentage > 1
         params.epochPercentage =1;
@@ -79,148 +88,149 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)   
     % get batch and train
     % --------------
     for t=1:params.batchSize:numel(subset)
-        batchCount = fix((t-1)/params.batchSize)+1;
+        batchIndex = fix((t-1)/params.batchSize)+1;
+        totalBatch = ceil(numel(subset)/params.batchSize);
         fprintf('%s: epoch %02d: %3d/%3d:', mode, epoch, ...
-            batchCount, ceil(numel(subset)/params.batchSize)) ;
+            batchIndex, totalBatch) ;
         batchSize = min(params.batchSize, numel(subset) - t + 1) ;
-
-        % get this image batch and prefetch the next
-        batchStart = t + (labindex-1) ;
-        batchEnd = min(t+params.batchSize-1, numel(subset)) ;
-        batch = subset(batchStart : params.numSubBatches * numlabs : batchEnd) ;
-        num = num + numel(batch) ;
-        if numel(batch) == 0, continue ; end
-        
-        % get images as input
-        inputs = params.getBatch(params.imdb, batch) ;
-
-        if params.prefetch
-            if s == params.numSubBatches
-                batchStart = t + (labindex-1) + params.batchSize ;
-                batchEnd = min(t+2*params.batchSize-1, numel(subset)) ;
-            else
-                batchStart = batchStart + numlabs ;
+        % 
+        for s=1:params.numSubBatches
+            % get this image batch and prefetch the next
+            batchStart = t + (labindex-1) + (s-1) * numlabs;
+            batchEnd = min(t+params.batchSize-1, numel(subset)) ;
+            batch = subset(batchStart : params.numSubBatches * numlabs : batchEnd) ;
+            num = num + numel(batch) ;
+            if numel(batch) == 0, continue ; end
+            % get images as input
+            inputs = params.getBatch(params.imdb, batch) ;
+            
+            if params.prefetch
+                if s == params.numSubBatches
+                    batchStart = t + (labindex-1) + params.batchSize ;
+                    batchEnd = min(t+2*params.batchSize-1, numel(subset)) ;
+                else
+                    batchStart = batchStart + numlabs ;
+                end
+                nextBatch = subset(batchStart : params.numSubBatches * numlabs : batchEnd) ;
+                params.getBatch(params.imdb, nextBatch) ;
             end
-            nextBatch = subset(batchStart : params.numSubBatches * numlabs : batchEnd) ;
-            params.getBatch(params.imdb, nextBatch) ;
-        end
-        % create random mask 
-        maskC = create_random_mask(size(inputs{2}), params.local_area_size, params.mask_range);
-        maskD = create_random_mask(size(inputs{2}), params.local_area_size, params.mask_range);
-        
-        original_images = inputs{2};
-        labelFake = zeros(1, 1, 1, numel(batch), 'single');
-        labelReal = ones(1, 1, 1, numel(batch), 'single');
-        
-        % if using gpus, convert the array to gpuArray
-        if numGpus>0
-            maskC = structfun(@gpuArray, maskC, 'UniformOutput', false) ;
-            maskD = structfun(@gpuArray, maskD, 'UniformOutput', false) ;
-            labelFake = gpuArray(labelFake);
-            labelReal = gpuArray(labelReal);
-        end
-        
-        % -------------------
-        % training object
-        % --------------------
-        if strcmp(params.trainingObject, "generator")
-            netG.mode = 'normal';
-            % if the accumulateParamDers is equal to 0, the derivative will
-            % be recalculated in a bp
-            netG.accumulateParamDers = 0;
-            % eval({input},{ders}) will complete a forward propagation and
-            % a backward propagation
-            netG.eval({'original_images', original_images, 'mask', maskC.mask_array}, ...
-                {'mse_loss', 1});
-            mseLoss = netG.getVar('mse_loss');
-            mseLoss = gather(mseLoss.value);
-            % mseLoss should be a scalar
-            errorG = mseLoss;
-            % update netG
-            state.solverState = state.solverStateG;
-            state = accumulateGradients(netG, state, params, batchSize, parserv);
-            state.solverStateG = state.solverState;
+            % create random mask
+            maskC = create_random_mask(size(inputs{2}), params.local_area_size, params.mask_range);
+            maskD = create_random_mask(size(inputs{2}), params.local_area_size, params.mask_range);
             
-        elseif strcmp(params.trainingObject, "discriminator") || strcmp(params.trainingObject, "combination")
-            netG.mode = 'normal';
-            % netG.eval({input}) complete a forward propagation without a
-            % backward propagation
-            netG.eval({'original_images', original_images, 'mask', maskC.mask_array});
-            % get the completed images
-            completedImages = netG.getVar('completed_images');
-            completedImages = completedImages.value;
+            original_images = inputs{2};
+            labelFake = zeros(1, 1, 1, numel(batch), 'single');
+            labelReal = ones(1, 1, 1, numel(batch), 'single');
             
-            % train discriminator with fake and real data
-            netD.mode = 'normal' ;
-            netD.accumulateParamDers = 0 ;
-            local_images_area = get_local_area(completedImages, maskC);
-            netD.eval({'local_disc_input',local_images_area, 'global_disc_input',completedImages , 'labels',labelFake, ...
-                'multiply_alpha', false}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 1) ;
-            errorFake = netD.getVar('sigmoid_cross_entropy_loss');
-            errorFake = gather(errorFake.value);
-            % -----
-            % set the accumulateParamDers to be 1 beacause the netD should
-            % forward and backward twice to accumulate the derivatives
-            netD.accumulateParamDers = 1 ;
-            local_images_area = get_local_area(original_images, maskD);
-            netD.eval({'local_disc_input',local_images_area, 'global_disc_input', original_images, 'labels',labelReal, ...
-                'multiply_alpha', false}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 0) ;
-            
-            errorReal = netD.getVar('sigmoid_cross_entropy_loss');
-            errorReal = gather(errorReal.value);
-            errorD = errorFake + errorReal;
-            % update netD
-            state.solverState = state.solverStateD;
-            state = accumulateGradients(netD, state, params, 2 * batchSize, parserv);
-            state.solverStateD = state.solverState;
-            % --------------------------------
-            if strcmp(params.trainingObject, "combination")
-                % calculate the gan loss of generator
-                netD.accumulateParamDers = 0 ;
-                local_images_area = get_local_area(completedImages, maskC);
-                netD.eval({'local_disc_input', local_images_area, 'global_disc_input',completedImages , 'labels',labelReal, ...
-                    'multiply_alpha', true}, {'sigmoid_cross_entropy_loss', 1}, 'holdOn', 0);
-                errorG = netD.getVar('sigmoid_cross_entropy_loss');
-                errorG = gather(errorG.value);
-                % get the derivative from local dicriminator and the global
-                % dicriminator for generator's backwarking
-                df_dg = get_der_from_discriminator(netD, maskC);
-                % cleanup der
-                for p=1:numel(netD.params)
-                    netD.params(p).der = [];
-                end
-                for v=1:numel(netD.vars)
-                    netD.vars(v).der = [];
-                end
-                % eval generator
+            % if using gpus, convert the array to gpuArray
+            if numGpus>0
+                maskC = structfun(@gpuArray, maskC, 'UniformOutput', false) ;
+                maskD = structfun(@gpuArray, maskD, 'UniformOutput', false) ;
+                labelFake = gpuArray(labelFake);
+                labelReal = gpuArray(labelReal);
+            end
+            % -------------------
+            % training object
+            % --------------------
+            if strcmp(params.trainingObject, "generator")
                 netG.mode = 'normal';
+                % if the accumulateParamDers is equal to 0, the derivative will
+                % be recalculated in a bp
                 netG.accumulateParamDers = 0;
-                % netG can use backward propagation from the completed_images layer instead of the loss layer
+                % eval({input},{ders}) will complete a forward propagation and
+                % a backward propagation
                 netG.eval({'original_images', original_images, 'mask', maskC.mask_array}, ...
-                    {'completed_images', df_dg}, 'holdOn', 1);
-                % calculate the mse loss of the generator
-                netG.accumulateParamDers = 1;
-                netG.eval({'original_images', original_images, 'mask', maskC.mask_array}, ...
-                    {'mse_loss', 1}, 'holdOn', 0);
-                
+                    {'mse_loss', 1});
                 mseLoss = netG.getVar('mse_loss');
                 mseLoss = gather(mseLoss.value);
-                errorG = errorG + mseLoss;
+                % mseLoss should be a scalar
+                GLoss = mseLoss;
                 % update netG
-                state.solverState = state.solverStateG;
-                state = accumulateGradients(netG, state, params, batchSize, parserv);
-                state.solverStateG = state.solverState;
+                stateG = accumulateGradients(netG, stateG, params, batchSize, parservG);
+                
+            elseif strcmp(params.trainingObject, "discriminator") || strcmp(params.trainingObject, "combination")
+                netG.mode = 'normal';
+                % netG.eval({input}) complete a forward propagation without a
+                % backward propagation
+                netG.eval({'original_images', original_images, 'mask', maskC.mask_array});
+                % get the completed images
+                completedImages = netG.getVar('completed_images');
+                completedImages = completedImages.value;
+                
+                % train discriminator with fake and real data
+                netD.mode = 'normal' ;
+                netD.accumulateParamDers = 0 ;
+                local_images_area = get_local_area(completedImages, maskC);
+                netD.eval({'local_disc_input',local_images_area, 'global_disc_input',completedImages , 'labels',labelFake, ...
+                    'multiply_alpha', false}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 1) ;
+                ImageFakeDLoss = netD.getVar('sigmoid_cross_entropy_loss');
+                ImageFakeDLoss = gather(ImageFakeDLoss.value);
+                % -----
+                % set the accumulateParamDers to be 1 beacause the netD should
+                % forward and backward twice to accumulate the derivatives
+                netD.accumulateParamDers = 1 ;
+                local_images_area = get_local_area(original_images, maskD);
+                netD.eval({'local_disc_input',local_images_area, 'global_disc_input', original_images, 'labels',labelReal, ...
+                    'multiply_alpha', false}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 0) ;
+                
+                ImageRealDLoss = netD.getVar('sigmoid_cross_entropy_loss');
+                ImageRealDLoss = gather(ImageRealDLoss.value);
+                DLoss = ImageFakeDLoss + ImageRealDLoss;
+                % update netD
+                stateD = accumulateGradients(netD, stateD, params, 2 * batchSize, parservD);
+                % --------------------------------
+                if strcmp(params.trainingObject, "combination")
+                    % calculate the gan loss of generator
+                    netD.accumulateParamDers = 0 ;
+                    local_images_area = get_local_area(completedImages, maskC);
+                    netD.eval({'local_disc_input', local_images_area, 'global_disc_input',completedImages , 'labels',labelReal, ...
+                        'multiply_alpha', true}, {'sigmoid_cross_entropy_loss', 1}, 'holdOn', 0);
+                    GLoss = netD.getVar('sigmoid_cross_entropy_loss');
+                    GLoss = gather(GLoss.value);
+                    % get the derivative from local dicriminator and the global
+                    % dicriminator for generator's backwarking
+                    df_dg = get_der_from_discriminator(netD, maskC);
+                    % cleanup der
+                    for p=1:numel(netD.params)
+                        netD.params(p).der = [];
+                    end
+                    for v=1:numel(netD.vars)
+                        netD.vars(v).der = [];
+                    end
+                    % eval generator
+                    netG.mode = 'normal';
+                    netG.accumulateParamDers = 0;
+                    % netG can use backward propagation from the completed_images layer instead of the loss layer
+                    netG.eval({'original_images', original_images, 'mask', maskC.mask_array}, ...
+                        {'completed_images', df_dg}, 'holdOn', 1);
+                    % calculate the mse loss of the generator
+                    netG.accumulateParamDers = 1;
+                    netG.eval({'original_images', original_images, 'mask', maskC.mask_array}, ...
+                        {'mse_loss', 1}, 'holdOn', 0);
+                    
+                    mseLoss = netG.getVar('mse_loss');
+                    mseLoss = gather(mseLoss.value);
+                    GLoss = GLoss + mseLoss;
+                    % update netG
+                    stateG = accumulateGradients(netG, stateG, params, batchSize, parservG);
+                end
+            else
+                error('wrong params.trainingObject:%s', params.trainingObject);
             end
-        else
-            error('wrong params.trainingObject:%s', params.trainingObject);
         end
+
         % Get statistics.
         time = toc(start) + adjustTime ;
         batchTime = time - stats.time ;
         stats.num = num ;
         stats.time = time ;
+        
         currentSpeed = batchSize / batchTime ;
         averageSpeed = (t + batchSize - 1) / time ;
+        
+        stats = params.extractStatsFn(stats,netD);
+        stats = params.extractStatsFn(stats,netG);
+        
         if t == 3*params.batchSize + 1
             % compensate for the first three iterations, which are outliers
             adjustTime = 4*batchTime - time ;
@@ -229,25 +239,24 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)   
         % loss may get inf values
         switch params.trainingObject
             case 'generator'
-                stats.errorG = stats.errorG + errorG;
-                fprintf(' errorG: %.3f', errorG/batchSize) ;
+                stats.GLoss = stats.GLoss + GLoss;
+                fprintf(' GLoss: %.3f', GLoss/(batchSize/numlabs)) ;
             case 'discriminator'
-                stats.errorD = stats.errorD + errorD;
-                fprintf(' errorD: %.3f', errorD/(batchSize * 2));
+                stats.DLoss = stats.DLoss + DLoss;
+                fprintf(' DLoss: %.3f', DLoss/(batchSize * 2/numlabs));
             case 'combination'
-                stats.errorG = stats.errorG + errorG;
-                stats.errorD = stats.errorD + errorD;
-                fprintf(' errorG: %.3f errorD: %.3f', errorG/batchSize, errorD/(batchSize * 2)) ;
+                stats.GLoss = stats.GLoss + GLoss;
+                stats.DLoss = stats.DLoss + DLoss;
+                fprintf(' GLoss: %.3f DLoss: %.3f', GLoss/(batchSize/numlabs), DLoss/(batchSize * 2/numlabs)) ;
             otherwise
                 error('wrong training object')
         end
-        fprintf(' %.1f (%.1f) Hz', averageSpeed, currentSpeed) ;
-        fprintf('\n') ;
+        fprintf(' %.1f (%.1f) Hz\n', averageSpeed, currentSpeed) ;
         % ----------
         % save sample images
         % ----------
-        if mod(batchCount, params.sample_save_per_batch_count)==0
-           path = sprintf('./pics/epoch_%d_%d.png', params.epoch, batchCount);
+        if mod(batchIndex, params.sample_save_per_batch_count)==0
+           path = sprintf('./pics/epoch_%d_labindex_%d_%d.png', params.epoch, labindex, batchIndex);
            completedImages = netG.getVar('completed_images');
            completedImages = completedImages.value;
            save_sample_images(completedImages, [4, 4], path);
@@ -255,44 +264,53 @@ function [netG, netD, state] = process_epoch(netG, netD, state, params, mode)   
         end
     end
     
-    stats.errorG = stats.errorG / numel(subset) ;
-    stats.errorD = stats.errorD / numel(subset) ;
+    stats.GLoss = stats.GLoss / numel(subset) * numlabs ;
+    stats.DLoss = stats.DLoss / numel(subset) * numlabs;
+    
     % Save back to state.
-    state.stats.(mode) = stats ;
+    stateG.stats.(mode) = stats ;
+    stateD.stats.(mode) = stats;
+    
     if params.profile
         if numGpus <= 1
-            state.prof.(mode) = profile('info') ;
+            stateG.prof.(mode) = profile('info') ;
+            stateD.prof.(mode) = profile('info') ;
             profile off ;
         else
-            state.prof.(mode) = mpiprofile('info');
+            stateG.prof.(mode) = mpiprofile('info');
+            stateD.prof.(mode) = mpiprofile('info');
             mpiprofile off ;
         end
     end
     if ~params.saveSolverState
-        state.solverStateG = [] ;
-        state.solverStateD = [] ;
+        stateG.solverState = [] ;
+        stateD.solverState = [] ;
     else
-        for i = 1:numel(state.solverStateG)
-            s = state.solverStateG{i} ;
+        for i = 1:numel(stateG.solverState)
+            s = stateG.solverState{i} ;
             if isnumeric(s)
-                state.solverStateG{i} = gather(s) ;
+                stateG.solverState{i} = gather(s) ;
             elseif isstruct(s)
-                state.solverStateG{i} = structfun(@gather, s, 'UniformOutput', false) ;
+                stateG.solverState{i} = structfun(@gather, s, 'UniformOutput', false) ;
             end
         end
-        for i = 1:numel(state.solverStateD)
-            s = state.solverStateD{i} ;
+        for i = 1:numel(stateD.solverState)
+            s = stateD.solverState{i} ;
             if isnumeric(s)
-                state.solverStateD{i} = gather(s) ;
+                stateD.solverState{i} = gather(s) ;
             elseif isstruct(s)
-                state.solverStateD{i} = structfun(@gather, s, 'UniformOutput', false) ;
+                stateD.solverState{i} = structfun(@gather, s, 'UniformOutput', false) ;
             end
         end
     end
+    
     netG.reset() ;
     netG.move('cpu') ;
     netD.reset() ;
     netD.move('cpu') ;
+    
+    state = [stateG, stateD];
+    net = [netG netD];
 end
 % -------------------------------------------------------------------------
 function state = accumulateGradients(net, state, params, batchSize, parserv)
