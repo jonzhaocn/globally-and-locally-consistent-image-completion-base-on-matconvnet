@@ -16,7 +16,7 @@ function [net, info] = glcic_train(varargin)
 
     opts.numFetchThreads = 12 ;
     % opts.imdbPath = fullfile(opts.expDir, 'imdb.mat');
-    gpus = [1];
+    gpus = [1,2];
     opts.train = struct('gpus', gpus) ;
     opts = vl_argparse(opts, varargin) ;
 

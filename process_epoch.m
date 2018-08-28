@@ -8,6 +8,8 @@
 function [net, state] = process_epoch(net, state, params, mode)
     netG = net(1);
     netD = net(2);
+    netG.mode = 'normal';
+    netD.mode = 'normal';
     % initialize with momentum 0
     if isempty(state)
         stateG.solverState = cell(1, numel(netG.params)) ;
@@ -130,7 +132,6 @@ function [net, state] = process_epoch(net, state, params, mode)
             % training object
             % --------------------
             if strcmp(params.trainingObject, "generator")
-                netG.mode = 'normal';
                 % if the accumulateParamDers is equal to 0, the derivative will
                 % be recalculated in a bp
                 netG.accumulateParamDers = 0;
@@ -142,10 +143,12 @@ function [net, state] = process_epoch(net, state, params, mode)
                 GLoss = gather(GLoss.value);
                 % mseLoss should be a scalar
                 % update netG
-                stateG = accumulateGradients(netG, stateG, params, size(original_images, 4), parservG);
+                if ~isempty(parservG)
+                    parservG.sync(); 
+                end
+                stateG = accumulateGradients(netG, stateG, params, parservG);
                 
             elseif strcmp(params.trainingObject, "discriminator") || strcmp(params.trainingObject, "combination")
-                netG.mode = 'normal';
                 % netG.eval({input}) complete a forward propagation without a
                 % backward propagation
                 netG.eval({'original_images', original_images, 'mask', maskC.mask_array});
@@ -154,7 +157,6 @@ function [net, state] = process_epoch(net, state, params, mode)
                 completedImages = completedImages.value;
                 
                 % train discriminator with fake and real data
-                netD.mode = 'normal' ;
                 netD.accumulateParamDers = 0 ;
                 local_images_area_fake = get_local_area(completedImages, maskC);
                 local_images_area_real = get_local_area(original_images, maskD);
@@ -165,7 +167,10 @@ function [net, state] = process_epoch(net, state, params, mode)
                 DLoss = netD.getVar('sigmoid_cross_entropy_loss');
                 DLoss = gather(DLoss.value);
                 % update netD
-                stateD = accumulateGradients(netD, stateD, params, 2 * size(original_images, 4), parservD);
+                if ~isempty(parservD)
+                    parservD.sync(); 
+                end
+                stateD = accumulateGradients(netD, stateD, params, parservD);
                 
                 % --------------------------------
                 if strcmp(params.trainingObject, "combination")
@@ -180,7 +185,6 @@ function [net, state] = process_epoch(net, state, params, mode)
                     df_dg = get_der_from_discriminator(netD, maskC);
                     
                     % eval generator
-                    netG.mode = 'normal';
                     netG.accumulateParamDers = 0;
                     % netG can use backward propagation from the completed_images layer instead of the loss layer
                     netG.eval({'original_images', original_images, 'mask', maskC.mask_array}, ...
@@ -194,19 +198,20 @@ function [net, state] = process_epoch(net, state, params, mode)
                     mseLoss = gather(mseLoss.value);
                     GLoss = GLoss + mseLoss;
                     % update netG
-                    stateG = accumulateGradients(netG, stateG, params, size(original_images, 4), parservG);
+                    if ~isempty(parservG)
+                        parservG.sync();
+                    end
+                    stateG = accumulateGradients(netG, stateG, params, parservG);
                 end
             else
                 error('wrong params.trainingObject:%s', params.trainingObject);
             end
             % test mode
         else
-            netG.mode = 'normal';
             netG.forward({'original_images', original_images, 'mask', maskC.mask_array})
             completedImages = netG.getVar('completed_images');
             completedImages = completedImages.value;
             
-            netD.mode = 'normal';
             local_images_area_fake = get_local_area(completedImages, maskC);
             local_images_area_real = get_local_area(original_images, maskD);
             netD.eval({'local_disc_input', cat(4, local_images_area_fake, local_images_area_real),...
@@ -252,8 +257,8 @@ function [net, state] = process_epoch(net, state, params, mode)
             % ----------
             % save sample images
             % ----------
-            if mod(batchIndex, params.sample_save_per_batch_count)==0
-                path = sprintf('./pics/epoch_%d_labindex_%d_%d.png', params.epoch, labindex, batchIndex);
+            if mod(batchIndex, params.sample_save_per_batch_count)==0 && labindex==1
+                path = sprintf('./pics/epoch_%d_%d.png', params.epoch, batchIndex);
                 completedImages = netG.getVar('completed_images');
                 completedImages = completedImages.value;
                 save_sample_images(completedImages, [4, 4], path);
@@ -314,10 +319,12 @@ function [net, state] = process_epoch(net, state, params, mode)
     net = [netG netD];
 end
 % -------------------------------------------------------------------------
-function state = accumulateGradients(net, state, params, batchSize, parserv)
+function state = accumulateGradients(net, state, params, parserv)
 % -------------------------------------------------------------------------
     numGpus = numel(params.gpus) ;
     otherGpus = setdiff(1:numGpus, labindex) ;
+    numWorkers = max(1,numGpus) * params.numSubBatches ;
+
     for p=1:numel(net.params)
 
         if ~isempty(parserv)
@@ -325,35 +332,42 @@ function state = accumulateGradients(net, state, params, batchSize, parserv)
         else
             parDer = net.params(p).der ;
         end
+
         switch net.params(p).trainMethod
+
             case 'average' % mainly for batch normalization
                 thisLR = net.params(p).learningRate ;
                 net.params(p).value = vl_taccum(...
                     1 - thisLR, net.params(p).value, ...
-                    (thisLR/batchSize/net.params(p).fanout),  parDer) ;
-                
+                    (thisLR/numWorkers/net.params(p).fanout),  parDer) ;
+
             case 'gradient'
                 thisDecay = params.weightDecay * net.params(p).weightDecay ;
                 thisLR = params.learningRate * net.params(p).learningRate ;
+
                 if thisLR>0 || thisDecay>0
                     % Normalize gradient and incorporate weight decay.
-                    parDer = vl_taccum(1/batchSize, parDer, ...
+                    parDer = vl_taccum(1/numWorkers, parDer, ...
                         thisDecay, net.params(p).value) ;
+
                     if isempty(params.solver)
                         % Default solver is the optimised SGD.
                         % Update momentum.
                         state.solverState{p} = vl_taccum(...
                             params.momentum, state.solverState{p}, ...
                             -1, parDer) ;
+
                         % Nesterov update (aka one step ahead).
                         if params.nesterovUpdate
                             delta = params.momentum * state.solverState{p} - parDer ;
                         else
                             delta = state.solverState{p} ;
                         end
+
                         % Update parameters.
                         net.params(p).value = vl_taccum(...
                             1,  net.params(p).value, thisLR, delta) ;
+
                     else
                         % call solver function to update weights
                         [net.params(p).value, state.solverState{p}] = ...
