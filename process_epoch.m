@@ -10,6 +10,7 @@ function [net, state] = process_epoch(net, state, params, mode)
     netD = net(2);
     netG.mode = 'normal';
     netD.mode = 'normal';
+    alpha = 0.25;
     % initialize with momentum 0
     if isempty(state)
         stateG.solverState = cell(1, numel(netG.params)) ;
@@ -162,8 +163,8 @@ function [net, state] = process_epoch(net, state, params, mode)
                 local_images_area_real = get_local_area(original_images, maskD);
                 netD.eval({'local_disc_input', cat(4, local_images_area_fake, local_images_area_real),...
                     'global_disc_input',cat(4, completedImages, original_images) , ...
-                    'labels',cat(4, labelFake, labelReal), ...
-                    'multiply_alpha', false}, {'sigmoid_cross_entropy_loss',1}, 'holdOn', 0) ;
+                    'labels',cat(4, labelFake, labelReal)}, ...
+                    {'sigmoid_cross_entropy_loss',1}, 'holdOn', 0) ;
                 DLoss = netD.getVar('sigmoid_cross_entropy_loss');
                 DLoss = gather(DLoss.value);
                 % update netD
@@ -176,10 +177,10 @@ function [net, state] = process_epoch(net, state, params, mode)
                 if strcmp(params.trainingObject, "combination")
                     % calculate the gan loss of generator
                     netD.accumulateParamDers = 0 ;
-                    netD.eval({'local_disc_input', local_images_area_fake, 'global_disc_input',completedImages , 'labels',labelReal, ...
-                        'multiply_alpha', true}, {'sigmoid_cross_entropy_loss', 1}, 'holdOn', 0);
+                    netD.eval({'local_disc_input', local_images_area_fake, 'global_disc_input',completedImages , 'labels',labelReal}, ...
+                        {'sigmoid_cross_entropy_loss', alpha}, 'holdOn', 0);
                     GLoss = netD.getVar('sigmoid_cross_entropy_loss');
-                    GLoss = gather(GLoss.value);
+                    GLoss = gather(GLoss.value) * alpha;
                     % get the derivative from local dicriminator and the global
                     % dicriminator for generator's backwarking
                     df_dg = get_der_from_discriminator(netD, maskC);
@@ -216,8 +217,7 @@ function [net, state] = process_epoch(net, state, params, mode)
             local_images_area_real = get_local_area(original_images, maskD);
             netD.eval({'local_disc_input', cat(4, local_images_area_fake, local_images_area_real),...
                 'global_disc_input',cat(4, completedImages, original_images) , ...
-                'labels',cat(4, labelFake, labelReal), ...
-                'multiply_alpha', false}) ;
+                'labels',cat(4, labelFake, labelReal)}) ;
         end
 
         % Get statistics.
@@ -243,14 +243,14 @@ function [net, state] = process_epoch(net, state, params, mode)
             switch params.trainingObject
                 case 'generator'
                     stats.GLoss = stats.GLoss + GLoss;
-                    fprintf('\t GLoss: %.3f\n', GLoss/(batchSize/numlabs)) ;
+                    fprintf('\t GLoss: %.3f\n', GLoss) ;
                 case 'discriminator'
                     stats.DLoss = stats.DLoss + DLoss;
-                    fprintf('\t DLoss: %.3f\n', DLoss/(batchSize * 2/numlabs));
+                    fprintf('\t DLoss: %.3f\n', DLoss);
                 case 'combination'
                     stats.GLoss = stats.GLoss + GLoss;
                     stats.DLoss = stats.DLoss + DLoss;
-                    fprintf('\t GLoss: %.3f DLoss: %.3f\n', GLoss/(batchSize/numlabs), DLoss/(batchSize * 2/numlabs)) ;
+                    fprintf('\t GLoss: %.3f DLoss: %.3f\n', GLoss, DLoss) ;
                 otherwise
                     error('wrong training object')
             end

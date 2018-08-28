@@ -51,7 +51,8 @@ function complete_images(opts, read_images_opts)
     % only load the generator model:netG
     modelPath = @(ep) fullfile(opts.expDir, sprintf('net-epoch-%d.mat', ep));
     model_index = findLastCheckpoint(opts.expDir) ;
-    load(modelPath(model_index), 'netG') ;
+    load(modelPath(model_index), 'net') ;
+    netG = net(1);
     fprintf('load model:net-epoch-%d.mat\n', model_index);
     netG = dagnn.DagNN.loadobj(netG) ;
     
