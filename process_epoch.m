@@ -10,7 +10,7 @@ function [net, state] = process_epoch(net, state, params, mode)
     netD = net(2);
     netG.mode = 'normal';
     netD.mode = 'normal';
-    alpha = 0.25;
+    alpha = 1;
     % initialize with momentum 0
     if isempty(state)
         stateG.solverState = cell(1, numel(netG.params)) ;
@@ -140,8 +140,7 @@ function [net, state] = process_epoch(net, state, params, mode)
                 % a backward propagation
                 netG.eval({'original_images', original_images, 'mask', maskC.mask_array}, ...
                     {'mse_loss', 1});
-                GLoss = netG.getVar('mse_loss');
-                GLoss = gather(GLoss.value);
+                GLoss = gather(netG.getVar('mse_loss').value);
                 % mseLoss should be a scalar
                 % update netG
                 if ~isempty(parservG)
@@ -154,19 +153,28 @@ function [net, state] = process_epoch(net, state, params, mode)
                 % backward propagation
                 netG.eval({'original_images', original_images, 'mask', maskC.mask_array});
                 % get the completed images
-                completedImages = netG.getVar('completed_images');
-                completedImages = completedImages.value;
+                completedImages = netG.getVar('completed_images').value;
                 
                 % train discriminator with fake and real data
                 netD.accumulateParamDers = 0 ;
                 local_images_area_fake = get_local_area(completedImages, maskC);
                 local_images_area_real = get_local_area(original_images, maskD);
-                netD.eval({'local_disc_input', cat(4, local_images_area_fake, local_images_area_real),...
-                    'global_disc_input',cat(4, completedImages, original_images) , ...
-                    'labels',cat(4, labelFake, labelReal)}, ...
-                    {'sigmoid_cross_entropy_loss',1}, 'holdOn', 0) ;
-                DLoss = netD.getVar('sigmoid_cross_entropy_loss');
-                DLoss = gather(DLoss.value);
+                
+                beta = 1;
+                if strcmp(params.trainingObject, 'combination')
+                    beta = alpha;
+                end
+                netD.eval({'local_disc_input', local_images_area_fake,...
+                    'global_disc_input', completedImages, ...
+                    'labels', labelFake}, ...
+                    {'sigmoid_cross_entropy_loss', beta}, 'holdOn', 1) ;
+                DLoss = gather(netD.getVar('sigmoid_cross_entropy_loss').value) * beta;
+                netD.accumulateParamDers = 1 ;
+                netD.eval({'local_disc_input', local_images_area_real,...
+                    'global_disc_input', original_images, ...
+                    'labels',labelReal}, ...
+                    {'sigmoid_cross_entropy_loss', beta}, 'holdOn', 0) ;
+                DLoss = DLoss + gather(netD.getVar('sigmoid_cross_entropy_loss').value) * beta;
                 % update netD
                 if ~isempty(parservD)
                     parservD.sync(); 
@@ -179,8 +187,7 @@ function [net, state] = process_epoch(net, state, params, mode)
                     netD.accumulateParamDers = 0 ;
                     netD.eval({'local_disc_input', local_images_area_fake, 'global_disc_input',completedImages , 'labels',labelReal}, ...
                         {'sigmoid_cross_entropy_loss', alpha}, 'holdOn', 0);
-                    GLoss = netD.getVar('sigmoid_cross_entropy_loss');
-                    GLoss = gather(GLoss.value) * alpha;
+                    GLoss = gather(netD.getVar('sigmoid_cross_entropy_loss').value) * alpha;
                     % get the derivative from local dicriminator and the global
                     % dicriminator for generator's backwarking
                     df_dg = get_der_from_discriminator(netD, maskC);
@@ -194,9 +201,7 @@ function [net, state] = process_epoch(net, state, params, mode)
                     netG.accumulateParamDers = 1;
                     netG.eval({'original_images', original_images, 'mask', maskC.mask_array}, ...
                         {'mse_loss', 1}, 'holdOn', 0);
-                    
-                    mseLoss = netG.getVar('mse_loss');
-                    mseLoss = gather(mseLoss.value);
+                    mseLoss = gather(netG.getVar('mse_loss').value);
                     GLoss = GLoss + mseLoss;
                     % update netG
                     if ~isempty(parservG)
@@ -210,8 +215,7 @@ function [net, state] = process_epoch(net, state, params, mode)
             % test mode
         else
             netG.forward({'original_images', original_images, 'mask', maskC.mask_array})
-            completedImages = netG.getVar('completed_images');
-            completedImages = completedImages.value;
+            completedImages = netG.getVar('completed_images').value;
             
             local_images_area_fake = get_local_area(completedImages, maskC);
             local_images_area_real = get_local_area(original_images, maskD);
@@ -259,8 +263,7 @@ function [net, state] = process_epoch(net, state, params, mode)
             % ----------
             if mod(batchIndex, params.sample_save_per_batch_count)==0 && labindex==1
                 path = sprintf('./pics/epoch_%d_%d.png', params.epoch, batchIndex);
-                completedImages = netG.getVar('completed_images');
-                completedImages = completedImages.value;
+                completedImages = netG.getVar('completed_images').value;
                 save_sample_images(completedImages, [4, 4], path);
                 fprintf('save sample images as %s\n.', path);
             end
@@ -393,10 +396,8 @@ end
 % get the derivative from local dicriminator and the global
 % dicriminator for generator's backwarking
 function der = get_der_from_discriminator(netD, Mask)
-    netD_local_input_der = netD.getVar('local_disc_input');
-    netD_local_input_der = netD_local_input_der.der;
-    netD_global_input_der = netD.getVar('global_disc_input');
-    netD_global_input_der = netD_global_input_der.der;
+    netD_local_input_der = netD.getVar('local_disc_input').der;
+    netD_global_input_der = netD.getVar('global_disc_input').der;
     der = netD_global_input_der;
     la_h_s = Mask.local_area_top_left_point(1);
     la_w_s = Mask.local_area_top_left_point(2);

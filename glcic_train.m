@@ -61,7 +61,7 @@ function [net, info] = glcic_train(varargin)
     meta.augmentation.jitterScale = 1 ;
     meta.augmentation.jitterBrightness = 0 ;
     % train options 
-    lr = logspace(-3, -4, 20);
+    lr = logspace(-3, -5, 30);
     meta.trainOpts.learningRate =  lr;
     meta.trainOpts.numEpochs = 21 ;
     meta.trainOpts.batchSize = 64 ;

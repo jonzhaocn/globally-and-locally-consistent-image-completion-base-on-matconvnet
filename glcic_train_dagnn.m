@@ -22,7 +22,7 @@ function [net, stats] = glcic_train_dagnn(net, imdb, getBatch, varargin)
     opts.weightDecay = 0.0005 ;
     opts.labelSmoothing = false ;
 
-    opts.solver = @solver.adam ; 
+    opts.solver = @solver.adadelta;
     opts.solverOpts.beta1 = 0.5 ;
     opts.sample_save_per_batch_count = 100;
     % mask range is the range of each side's length

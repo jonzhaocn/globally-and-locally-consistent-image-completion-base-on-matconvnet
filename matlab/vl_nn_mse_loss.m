@@ -9,6 +9,5 @@ function out = vl_nn_mse_loss(completed_images, original_images, mask, dzdy)
         out = sum(out(:)) / missing_pixel_count;
     else
         out = dzdy .* 2 * mask .* mask .* (completed_images - original_images) / missing_pixel_count;
-%         der_original = dzdy .* 2 * mask .* mask .* (original_images - completed_images);
     end
 end
